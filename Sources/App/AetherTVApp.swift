@@ -11,6 +11,13 @@ struct AetherTVApp: App {
         NetworkPitfallGuards.configureEngineTLS(
             allowSelfSignedLAN: PlayerSettingsStore.shared.allowSelfSignedCertificates
         )
+        // 冒烟测试从这里启动，而不是 SwiftUI 的 .task：弹出全屏页面会让根视图“消失”，
+        // SwiftUI 随之取消 .task，正在进行的网络请求会被一起取消。
+        if SmokeTest.isRequested {
+            Task { @MainActor in
+                await SmokeTest.runIfRequested()
+            }
+        }
     }
 
     var body: some Scene {
@@ -20,12 +27,6 @@ struct AetherTVApp: App {
                 .environmentObject(sourceStore)
                 .environmentObject(historyStore)
                 .preferredColorScheme(.dark)
-                .task {
-                    // 冒烟测试构建里才会真的跑起来；正常构建里 runIfRequested 是空函数
-                    if SmokeTest.isRequested {
-                        await SmokeTest.runIfRequested()
-                    }
-                }
         }
     }
 }

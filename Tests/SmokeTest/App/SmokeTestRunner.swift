@@ -45,11 +45,22 @@ enum SmokeTestRunner {
     }
 
     static var report = Report()
+    static var didStart = false
 
     // MARK: - 入口
 
     /// 由 Sources/App/SmokeTest.swift 在 `#if SMOKE_TEST` 分支里调用
     static func run() async {
+        // 只跑一次：界面重新出现、多窗口都不该重复整轮测试
+        guard !didStart else { return }
+        didStart = true
+        do {
+            try await waitForRoot()
+        } catch {
+            fail("启动", error.localizedDescription)
+            return
+        }
+
         let defaults = UserDefaults.standard
         let webdavPort = defaults.integer(forKey: "smokeWebdavPort")
         let hlsPort = defaults.integer(forKey: "smokeHlsPort")
@@ -294,9 +305,11 @@ enum SmokeTestRunner {
             await dismissAll()
             return detail
         } catch {
+            var context = "state=\(engine.state) pos=\(rounded(engine.clock.currentTime)) dur=\(rounded(engine.duration))"
+            if let info = engine.errorInfo { context += " error=\(info.kind.rawValue): \(info.message)" }
             controller.stopAndDismiss()
             await dismissAll()
-            throw error
+            throw SmokeTestFailure.failed("\(error.localizedDescription) [\(context)]")
         }
     }
 
@@ -319,6 +332,16 @@ enum SmokeTestRunner {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let windows = scenes.flatMap { $0.windows }
         return (windows.first { $0.isKeyWindow } ?? windows.first)?.rootViewController
+    }
+
+    /// 从 App.init 启动时窗口还没建好，等它出现再开始
+    static func waitForRoot() async throws {
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            if rootViewController() != nil { return }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        throw SmokeTestFailure.failed("30 秒内没有拿到 App 的窗口")
     }
 
     static func present(_ controller: UIViewController) {
