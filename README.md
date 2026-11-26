@@ -2,6 +2,9 @@
 
 基于开源播放引擎 [AetherEngine](https://github.com/superuser404notfound/AetherEngine) 构建的 tvOS 18+ 原生风格视频播放器，专为自签名 Apple TV 客厅观影场景设计。
 
+[![Build AetherTV Unsigned IPA](https://github.com/luochaojie1984/AetherTV-tvOS/actions/workflows/build-tvos-ipa.yml/badge.svg)](https://github.com/luochaojie1984/AetherTV-tvOS/actions/workflows/build-tvos-ipa.yml)
+[![Smoke Test (tvOS Simulator)](https://github.com/luochaojie1984/AetherTV-tvOS/actions/workflows/smoke-test-tvos.yml/badge.svg)](https://github.com/luochaojie1984/AetherTV-tvOS/actions/workflows/smoke-test-tvos.yml)
+
 ## 核心特性
 
 - **苹果原生视觉与交互体验**：复用 tvOS 原生焦点引擎（Focus Engine）、毛玻璃视觉层级与系统交互音效。
