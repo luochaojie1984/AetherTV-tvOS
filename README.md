@@ -17,6 +17,10 @@
 | :---: | :---: |
 | <img src="docs/screenshots/playback-subtitles.jpg" width="480"> | <img src="docs/screenshots/scrub-preview.jpg" width="480"> |
 
+| 播放后自动出现在首页的「继续观看 / 最近观看」 |
+| :---: |
+| <img src="docs/screenshots/home-continue-watching.jpg" width="720"> |
+
 （图片以 HTML 标签限宽显示；直接点开可看 1920×1080 原图。）
 
 ## 核心特性
