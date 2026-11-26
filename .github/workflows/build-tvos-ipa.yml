@@ -18,13 +18,13 @@ on:
         required: false
         default: ""
       traits:
-        description: "AetherEngine 可选组件：none 全关（默认） / recommended 推荐四项 / all 再加双层合成"
+        description: "AetherEngine 可选组件：recommended 推荐四项（默认）/ none 全关 / all 再加双层合成"
         type: choice
         options:
-          - none
           - recommended
+          - none
           - all
-        default: none
+        default: recommended
 
 # 同一分支上的新推送会取消还没跑完的旧构建
 concurrency:
@@ -51,11 +51,11 @@ jobs:
           restore-keys: swiftpm-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Apply optional AetherEngine traits
-        if: ${{ inputs.traits && inputs.traits != 'none' }}
+        if: ${{ (inputs.traits || 'recommended') != 'none' }}
         env:
           # AetherEngine 默认一个 trait 都不开（.default(enabledTraits: [])），所以这里要写全想要的项。
           # recommended = 上游 installation.md 的示例集合；DualLayerDolbyVision 上游不建议对外分发。
-          TRAITS: ${{ inputs.traits == 'all' && 'TrueHDObjectAudio,DTSXObjectAudio,DolbyVisionFelCurves,DolbyVisionStillReshaping,DualLayerDolbyVision' || 'TrueHDObjectAudio,DTSXObjectAudio,DolbyVisionFelCurves,DolbyVisionStillReshaping' }}
+          TRAITS: ${{ (inputs.traits || 'recommended') == 'all' && 'TrueHDObjectAudio,DTSXObjectAudio,DolbyVisionFelCurves,DolbyVisionStillReshaping,DualLayerDolbyVision' || 'TrueHDObjectAudio,DTSXObjectAudio,DolbyVisionFelCurves,DolbyVisionStillReshaping' }}
         run: |
           # 把 traits 列表插到 project.yml 里 AetherEngine 的 url 行之后（与版本号无关，改版本不会让锚点失效）
           awk -v traits="$TRAITS" '
@@ -118,7 +118,7 @@ jobs:
           fi
 
       - name: Verify traits were written into the project
-        if: ${{ inputs.traits && inputs.traits != 'none' }}
+        if: ${{ (inputs.traits || 'recommended') != 'none' }}
         run: |
           if ! grep -q "traits = (" AetherTV.xcodeproj/project.pbxproj; then
             echo "::error::已请求开启可选组件，但生成的工程里没有 traits。XcodeGen 至少需要 2.46.0：$(xcodegen --version)"

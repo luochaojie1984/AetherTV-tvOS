@@ -11,7 +11,7 @@
 #   <out-root>/hls/                plain HTTP, no auth (port 8081)
 #     sample.m3u8, seg_*.ts
 #   <out-root>/smb/                SMB share MEDIA (port 1445)
-#     Movies/sample.mkv, Movies/sample.mp4
+#     Movies/sample.mkv, Movies/sample.mp4, sample.zh.ass, sample.en.srt
 set -euo pipefail
 
 root="${1:?usage: prepare_fixtures.sh <out-root>}"
@@ -25,7 +25,7 @@ cp "$media/sample.mp4" "$media/sample.mkv" "$media/sample.zh.ass" "$media/sample
 cp "$media/sample.mp4" "$root/dav/shows/S01/episode-01.mp4"
 cp "$media/sample.mp4" "$root/dav/中文 目录/示例 视频.mp4"
 cp "$media/hls/"* "$root/hls/"
-cp "$media/sample.mp4" "$media/sample.mkv" "$root/smb/Movies/"
+cp "$media/sample.mp4" "$media/sample.mkv" "$media/sample.zh.ass" "$media/sample.en.srt" "$root/smb/Movies/"
 
 echo "fixtures ready under $root"
 find "$root" -type f | sed "s|$root/||" | sort

@@ -53,7 +53,7 @@ final class WebDAVClient: Sendable {
         </D:propfind>
         """.data(using: .utf8)
 
-        let session = NetworkPitfallGuards.makeResilientSession(allowSelfSignedLAN: allowSelfSignedLAN)
+        let session = NetworkPitfallGuards.sharedSession(allowSelfSignedLAN: allowSelfSignedLAN)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw WebDAVError.parseFailed
@@ -105,6 +105,7 @@ final class WebDAVClient: Sendable {
                 subtitle: "文件夹",
                 isDirectory: true,
                 streamURL: nil,
+                sourceId: source.id,
                 protocolType: .webdav,
                 remotePath: relative,
                 httpHeaders: headers
@@ -114,7 +115,6 @@ final class WebDAVClient: Sendable {
         for vid in videos.sorted(by: { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }) {
             let entryPath = extractPath(from: vid.href)
             let filename = resolvedFilename(entry: vid, path: entryPath)
-            let stem = (filename as NSString).deletingPathExtension.lowercased()
             let fileURL = resolveAbsoluteURL(origin: origin, href: vid.href)
             let relative = stripBasePath(entryPath, basePath: source.basePath)
 
@@ -122,15 +122,14 @@ final class WebDAVClient: Sendable {
             let matchedSubs: [ExternalSubtitleReference] = subtitles.compactMap { sub in
                 let subPath = extractPath(from: sub.href)
                 let subName = resolvedFilename(entry: sub, path: subPath)
-                let subLower = subName.lowercased()
-                guard subLower.hasPrefix(stem),
+                guard NetworkPitfallGuards.subtitleMatchesVideo(subtitleFilename: subName, videoFilename: filename),
                       let subURL = resolveAbsoluteURL(origin: origin, href: sub.href) else {
                     return nil
                 }
                 let ext = (subName as NSString).pathExtension.lowercased()
                 return ExternalSubtitleReference(
                     title: subName,
-                    language: inferLanguageCode(from: subName),
+                    language: NetworkPitfallGuards.inferSubtitleLanguageCode(from: subName),
                     url: subURL,
                     formatHint: ext,
                     httpHeaders: headers
@@ -200,20 +199,6 @@ final class WebDAVClient: Sendable {
         }
         return "/" + normFull
     }
-
-    private func inferLanguageCode(from filename: String) -> String? {
-        let lower = filename.lowercased()
-        if lower.contains("chs") || lower.contains("sc") || lower.contains("zh-cn") || lower.contains("简") {
-            return "zh-Hans"
-        }
-        if lower.contains("cht") || lower.contains("tc") || lower.contains("zh-tw") || lower.contains("繁") {
-            return "zh-Hant"
-        }
-        if lower.contains(".zh.") || lower.contains(".chi.") { return "zh" }
-        if lower.contains(".en.") || lower.contains(".eng.") { return "en" }
-        if lower.contains(".ja.") || lower.contains(".jpn.") { return "ja" }
-        return nil
-    }
 }
 
 private struct WebDAVEntry {
@@ -226,7 +211,6 @@ private struct WebDAVEntry {
 private final class WebDAVXMLParser: NSObject, XMLParserDelegate {
     private var entries: [WebDAVEntry] = []
     private var currentEntry: WebDAVEntry?
-    private var currentElement: String = ""
     private var buffer: String = ""
 
     static func parse(data: Data) -> [WebDAVEntry] {
@@ -246,7 +230,6 @@ private final class WebDAVXMLParser: NSObject, XMLParserDelegate {
         attributes attributeDict: [String: String] = [:]
     ) {
         let local = stripNamespace(elementName)
-        currentElement = local
         buffer = ""
         if local == "response" {
             currentEntry = WebDAVEntry()

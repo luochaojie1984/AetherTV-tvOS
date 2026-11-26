@@ -119,16 +119,7 @@ struct MediaPosterCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .bottomLeading) {
-                if let posterURL = item.posterURL {
-                    AsyncImage(url: posterURL) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().aspectRatio(contentMode: .fill)
-                        default:
-                            placeholderArtwork
-                        }
-                    }
-                } else {
+                AuthenticatedPosterImage(url: item.posterURL, sourceId: item.sourceId) {
                     placeholderArtwork
                 }
 

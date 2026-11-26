@@ -111,7 +111,7 @@ struct PlayerControlPanels: View {
                             title: "关闭字幕",
                             isSelected: !engine.isSubtitleActive
                         ) {
-                            engine.clearSubtitle()
+                            controller.clearPrimarySubtitle()
                         }
 
                         ForEach(engine.subtitleTracks, id: \.id) { track in
@@ -119,7 +119,7 @@ struct PlayerControlPanels: View {
                                 title: formatTrackLabel(track),
                                 isSelected: engine.isSubtitleActive && engine.activeSubtitleTrackIndex == track.id
                             ) {
-                                engine.selectSubtitleTrack(index: track.id)
+                                controller.selectPrimarySubtitleTrack(index: track.id)
                             }
                         }
                     }
@@ -136,11 +136,14 @@ struct PlayerControlPanels: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 12) {
                             trackChip(title: "关闭副字幕", isSelected: !engine.isSecondarySubtitleActive) {
-                                engine.clearSecondarySubtitle()
+                                controller.clearSecondarySubtitle()
                             }
                             ForEach(engine.subtitleTracks, id: \.id) { track in
-                                trackChip(title: formatTrackLabel(track), isSelected: false) {
-                                    engine.selectSecondarySubtitleTrack(index: track.id)
+                                trackChip(
+                                    title: formatTrackLabel(track),
+                                    isSelected: engine.isSecondarySubtitleActive && engine.activeSecondarySubtitleTrackIndex == track.id
+                                ) {
+                                    controller.selectSecondarySubtitleTrack(index: track.id)
                                 }
                             }
                         }
@@ -210,7 +213,7 @@ struct PlayerControlPanels: View {
                                 title: formatAudioTrackLabel(track),
                                 isSelected: engine.activeAudioTrackIndex == track.id
                             ) {
-                                engine.selectAudioTrack(index: track.id)
+                                controller.selectAudioTrack(index: track.id)
                             }
                         }
                     }
@@ -286,9 +289,8 @@ struct PlayerControlPanels: View {
 
                 HStack(spacing: 14) {
                     ForEach(VideoAspectMode.allCases) { mode in
-                        trackChip(title: mode.rawValue, isSelected: settings.aspectMode == mode) {
-                            settings.aspectMode = mode
-                            controller.applyVideoGravity()
+                        trackChip(title: mode.rawValue, isSelected: controller.activeAspectMode == mode) {
+                            controller.setAspectMode(mode)
                         }
                     }
 

@@ -35,10 +35,11 @@
   - 完整支持 HDR10 / HDR10+ / HLG / Dolby Vision（含防绿紫偏色的仅基础层模式）与 Dolby Atmos 透传、eARC 无损多声道 LPCM / ARC 环绕声桥接。
 - **特效字幕与双语字幕**：
   - 支持 SRT / VTT / ASS / SSA（保留颜色、粗斜体、九宫格定位等特效样式）及 PGS / DVB / DVD 图形字幕。
-  - 支持主副双语字幕、字体大小、底部垂直位置、颜色、底框透明度、时间延迟偏移微调，以及 WebDAV 同目录外挂字幕自动匹配。
-- **主流局域网协议全覆盖与避坑防护**：
+  - 支持主副双语字幕、字体大小、底部垂直位置、颜色、底框透明度、时间延迟偏移微调，以及 WebDAV / SMB 同目录外挂字幕自动匹配与挂载。
+- **主流局域网协议全覆盖、安全存储与快速配置**：
   - 支持 **WebDAV、SMB（AetherEngineSMB）、Emby、Jellyfin、Plex、DLNA、HTTP 直链**。
-  - 内置路径 Unicode NFC 规范化与防二次百分号编码、同源重定向保留 `Authorization` / Token、64 位大文件长度解析、局域网自签名 HTTPS 证书信任（`EngineTLS.serverTrustEvaluator`）、单连接限流与长连接拉流开关。
+  - 支持**手机扫码局域网网页快速配置**与 **Bonjour + SSDP 局域网设备自动发现**，免去遥控器繁琐输入；支持 Emby / Jellyfin 账号密码登录获取 Token 与交互选择用户、播放进度双向回传与单片音轨/字幕记忆。
+  - 密码与 API Token 全部经 Apple **Keychain** 存储，观看记录/收藏落盘自动脱敏；内置路径 Unicode NFC 规范化与防二次百分号编码、同源重定向保留鉴权头、64 位大文件长度解析、局域网自签名 HTTPS 证书信任（`EngineTLS.serverTrustEvaluator`）、单连接限流与长连接拉流开关。
 - **主流播放器常用功能**：
   - 自动续播记忆、剧集结尾自动预热下一集（`AetherEngine.prewarm`）并连播、跳过片头/片尾、倍速播放（0.5x~2.0x）、画面比例切换、对白增强、夜间模式、响度均衡、音频同步延迟、低清 SDR 超分放大、章节跳转、睡眠定时器、1Hz 实时码率/帧率/解码器 HUD。
 
@@ -64,7 +65,7 @@
 | :--- | :--- | :--- |
 | `runner` | `xcode-27` | 换成 `macos-latest` 可试 Xcode 26.6 兼容构建 |
 | `xcode_version` | 空 | 指定 Xcode 路径；留空沿用镜像默认 Xcode |
-| `traits` | `none` | 见下方「可选组件」 |
+| `traits` | `recommended` | 见下方「可选组件」（默认开启杜比视界预览重塑与 Atmos/DTS:X 推荐四项） |
 
 构建失败时，运行页面会多出一个 `AetherTV-xcodebuild-log` 产物，里面是完整的编译日志。
 
@@ -130,8 +131,8 @@ App 内的测试步骤（`Tests/SmokeTest/App/SmokeTestRunner.swift`）：设置
 
 ## 局域网协议避坑说明
 
-- **SMB**：进入 SMB 媒体源后可逐级浏览共享内的文件夹，凭据只保存在媒体源配置里（不随观看记录/收藏落盘）。播放走 `AetherEngineSMB` 的自定义 reader（ISO / IMG 镜像会保留引擎的光盘探测）。`AetherEngineSMB` 使用 SMB 2.0.2 / 2.1（NTLMv2 或访客），请在群晖 / 飞牛 / 威联通 / Windows 中确保**最小 SMB 协议设为 SMB2**，不要强制启用 SMB3 加密或强制签名。SMB 下暂不支持同目录外挂字幕，需要的话请在 NAS 上同时开启 WebDAV 或 Emby / Jellyfin。
-- **DLNA**：没有自动发现（SSDP 在多播权限受限的自签名环境下不可靠），需要在添加媒体源时填写**内容目录的 Control 地址路径**：MiniDLNA 常见 `/ctl/ContentDir`，Windows 媒体共享常见 `/ContentDirectory/Control`；端口留 0 即用默认端口。
+- **SMB**：进入 SMB 媒体源后可逐级浏览共享内的文件夹，自动匹配同目录 `.srt` / `.ass` / `.ssa` / `.vtt` / `.sup` 等外挂字幕并在起播前自动拉取挂载；凭据保存在 Keychain（不随 URL 或观看记录/收藏落盘）。播放走 `AetherEngineSMB` 的自定义 reader（ISO / IMG 镜像会保留引擎的光盘探测）。`AetherEngineSMB` 使用 SMB 2.0.2 / 2.1（NTLMv2 或访客），请在群晖 / 飞牛 / 威联通 / Windows 中确保**最小 SMB 协议设为 SMB2**，不要强制启用 SMB3 加密或强制签名。
+- **DLNA**：支持 SSDP 局域网自动发现（在未获多播受限权限的自签环境下会自动提示回退手动填写）；手动配置时可在添加媒体源填写**内容目录的 Control 地址路径**：MiniDLNA 常见 `/ctl/ContentDir`，Windows 媒体共享常见 `/ContentDirectory/Control`；端口留 0 即用默认端口。
 - **添加媒体源**：表单带「测试连接（读取根目录）」，填错地址或账号会当场报错，不必保存后再试。
 - **WebDAV（含 Alist / OpenList / 网盘反代）**：如果网盘反代限制同时连接数或频繁 Range 请求会被 403/429 限流，请在添加媒体源时勾选「单连接限流模式」或「保持长连接拉流」。
 - **自签名 HTTPS**：若局域网 NAS 或 Emby/Jellyfin 使用自签名证书，请在 App「设置 → 信任局域网自签名 HTTPS 证书」保持开启（仅对私有局域网 IP / `.local` / `.lan` 生效，不影响公网安全）。

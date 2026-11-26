@@ -177,8 +177,8 @@ struct BottomAppleProgressBar: View {
 
         VStack(spacing: 6) {
             ZStack(alignment: .bottomTrailing) {
-                if let cgImage = scrubEngine.previewImage {
-                    Image(uiImage: UIImage(cgImage: cgImage))
+                if let uiImage = scrubEngine.previewUIImage {
+                    Image(uiImage: uiImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .frame(width: previewWidth, height: previewHeight)
@@ -201,9 +201,9 @@ struct BottomAppleProgressBar: View {
 
                 // 预览浮窗右下角同步显示倍速与时间
                 HStack(spacing: 6) {
-                    Image(systemName: scrubEngine.direction.symbolName)
+                    Image(systemName: scrubEngine.isFineScrubbing ? "hand.draw.fill" : scrubEngine.direction.symbolName)
                         .font(.system(size: 14, weight: .bold))
-                    Text("\(Int(scrubEngine.speedMultiplier.rounded()))x")
+                    Text(scrubEngine.isFineScrubbing ? "精调" : "\(Int(scrubEngine.speedMultiplier.rounded()))x")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
                         .monospacedDigit()
                 }
@@ -225,8 +225,8 @@ struct BottomAppleProgressBar: View {
 
     private var speedCapsuleBadge: some View {
         HStack(spacing: 6) {
-            Image(systemName: scrubEngine.direction.symbolName)
-            Text("\(Int(scrubEngine.speedMultiplier.rounded()))x 实时预览")
+            Image(systemName: scrubEngine.isFineScrubbing ? "hand.draw.fill" : scrubEngine.direction.symbolName)
+            Text(scrubEngine.isFineScrubbing ? "触控精调预览" : "\(Int(scrubEngine.speedMultiplier.rounded()))x 实时预览")
                 .monospacedDigit()
         }
         .font(.system(size: 20, weight: .semibold, design: .rounded))

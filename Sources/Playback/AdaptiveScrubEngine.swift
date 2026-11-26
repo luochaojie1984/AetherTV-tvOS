@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 import CoreGraphics
 import AetherEngine
 
@@ -12,21 +13,23 @@ enum ScrubDirection: Int, Sendable {
     }
 }
 
-/// 长按顺滑变速快进/快退 + 画面实时预览引擎
+/// 长按顺滑变速快进/快退 + 暂停触控精调 + 画面实时预览引擎
 /// 核心特性：
 /// 1. 短按（< 0.28s）：原生 Apple TV 风格 ±10 秒精准跳转
 /// 2. 长按（>= 0.28s）：非线性平滑加速（按住越久速度越快，从 4x 平滑爬升至 120x）
-/// 3. 实时画面预览与速度匹配：
-///    - 优先调用 AetherEngine 的 cache-backed `scrubPreviewFrame`，零额外连接开销
-///    - 随着倍速提高自动缩短帧刷新间隔，快进越快画面切换越快
-///    - 超出缓存区间时，通过单并发节流 `seek(to:)` 直接驱动主画面实时刷新，同时保护 SMB/WebDAV 与解码队列不被打爆
+/// 3. 暂停触控精调（Jog Scrub）：触控板轻滑微调 1~2 秒级定位并实时刷新预览
+/// 4. 实时画面预览与防闪烁防回弹：
+///    - 优先调用 AetherEngine 的 cache-backed `scrubPreviewFrame`，保持上一帧直至新帧就绪
+///    - 松手提交最终 seek 前先等待旧的节流 `liveSeekTask` 完成，杜绝高速快进松手后画面回弹
 @MainActor
 final class AdaptiveScrubEngine: ObservableObject {
     @Published private(set) var isScrubbing: Bool = false
+    @Published private(set) var isFineScrubbing: Bool = false
     @Published private(set) var direction: ScrubDirection = .forward
     @Published private(set) var scrubTime: Double = 0
     @Published private(set) var speedMultiplier: Double = 1.0
     @Published private(set) var previewImage: CGImage?
+    @Published private(set) var previewUIImage: UIImage?
     @Published private(set) var previewActualTime: Double?
 
     private weak var engine: AetherEngine?
@@ -34,6 +37,7 @@ final class AdaptiveScrubEngine: ObservableObject {
     private var lastTickUptime: TimeInterval = 0
     private var lastPreviewRequestUptime: TimeInterval = 0
     private var lastLiveSeekUptime: TimeInterval = 0
+    private var lastFineNotchTime: Double = 0
     private var wasPlayingBeforeScrub: Bool = false
     private var isLiveSeekInFlight: Bool = false
     private var isPreviewInFlight: Bool = false
@@ -41,6 +45,7 @@ final class AdaptiveScrubEngine: ObservableObject {
     private var tickTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
     private var liveSeekTask: Task<Void, Never>?
+    private var finalSeekTask: Task<Void, Never>?
 
     /// 触发长按变速的阈值（秒）
     private let longPressThreshold: TimeInterval = 0.28
@@ -53,9 +58,12 @@ final class AdaptiveScrubEngine: ObservableObject {
 
     func beginPress(direction: ScrubDirection) {
         guard let engine, engine.duration > 1 else { return }
-        if isScrubbing && self.direction == direction { return }
+        if isScrubbing && !isFineScrubbing && self.direction == direction { return }
 
+        finalSeekTask?.cancel()
+        finalSeekTask = nil
         cancelInternalTasks()
+        isFineScrubbing = false
         self.direction = direction
         pressStartUptime = ProcessInfo.processInfo.systemUptime
         lastTickUptime = pressStartUptime
@@ -82,6 +90,8 @@ final class AdaptiveScrubEngine: ObservableObject {
         let wasScrub = isScrubbing
         let resumeAfter = wasPlayingBeforeScrub
 
+        let pendingLiveSeek = liveSeekTask
+        pendingLiveSeek?.cancel()
         cancelInternalTasks()
 
         guard let engine else {
@@ -94,28 +104,108 @@ final class AdaptiveScrubEngine: ObservableObject {
             AppleTVSoundEffects.playSelect()
             let jumpTarget = clampTime(engine.clock.currentTime + Double(dir.rawValue) * shortTapStepSeconds, duration: engine.duration)
             resetState()
-            Task {
+            finalSeekTask?.cancel()
+            finalSeekTask = Task {
+                _ = await pendingLiveSeek?.value
+                guard !Task.isCancelled else { return }
                 await engine.seek(to: jumpTarget)
             }
             return
         }
 
-        // 长按松手：提交最终精准落点，并恢复之前的播放状态
+        // 长按松手：先等旧的节流预览 seek 结束，再提交最终精准落点，防止旧 seek 覆盖导致画面回弹
         isScrubbing = false
+        isFineScrubbing = false
         speedMultiplier = 1.0
-        Task { [weak self] in
+        finalSeekTask?.cancel()
+        finalSeekTask = Task { [weak self] in
+            _ = await pendingLiveSeek?.value
+            guard !Task.isCancelled else { return }
             await engine.seek(to: target)
+            guard !Task.isCancelled else { return }
             if resumeAfter {
                 engine.play()
             }
-            // 等待画面落地后淡出预览缩略图
+            // 保持上一帧直至画面落地后淡出预览缩略图
             try? await Task.sleep(nanoseconds: 150_000_000)
-            self?.previewImage = nil
-            self?.previewActualTime = nil
+            guard !Task.isCancelled else { return }
+            self?.clearPreviewImages()
         }
     }
 
+    // MARK: - 暂停态 Siri Remote 触控板微调（Jog Scrub）
+
+    @discardableResult
+    func beginFineScrub() -> Bool {
+        guard let engine, engine.duration > 1, engine.state == .paused else { return false }
+        finalSeekTask?.cancel()
+        finalSeekTask = nil
+        cancelInternalTasks()
+
+        isScrubbing = true
+        isFineScrubbing = true
+        speedMultiplier = 1.0
+        wasPlayingBeforeScrub = false
+        scrubTime = engine.clock.currentTime
+        lastFineNotchTime = scrubTime
+        lastPreviewRequestUptime = 0
+        lastLiveSeekUptime = 0
+
+        requestFinePreview(at: scrubTime, engine: engine, force: true)
+        return true
+    }
+
+    func updateFineScrub(deltaSeconds: Double) {
+        guard isFineScrubbing, let engine else { return }
+        if abs(deltaSeconds) > 0.001 {
+            direction = deltaSeconds >= 0 ? .forward : .rewind
+        }
+        let nextTime = clampTime(scrubTime + deltaSeconds, duration: engine.duration)
+        scrubTime = nextTime
+
+        if abs(nextTime - lastFineNotchTime) >= 1.0 {
+            lastFineNotchTime = nextTime
+            AppleTVSoundEffects.playScrubNotch(speedMultiplier: 1.5)
+        }
+        requestFinePreview(at: nextTime, engine: engine, force: false)
+    }
+
+    func commitFineScrub() {
+        guard isFineScrubbing else { return }
+        let target = scrubTime
+        let pendingLiveSeek = liveSeekTask
+        pendingLiveSeek?.cancel()
+        cancelInternalTasks()
+
+        isScrubbing = false
+        isFineScrubbing = false
+        speedMultiplier = 1.0
+
+        guard let engine else {
+            clearPreviewImages()
+            return
+        }
+
+        finalSeekTask?.cancel()
+        finalSeekTask = Task { [weak self] in
+            _ = await pendingLiveSeek?.value
+            guard !Task.isCancelled else { return }
+            await engine.seek(to: target)
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+            self?.clearPreviewImages()
+        }
+    }
+
+    func cancelFineScrub() {
+        guard isFineScrubbing else { return }
+        cancel()
+    }
+
     func cancel() {
+        finalSeekTask?.cancel()
+        finalSeekTask = nil
         cancelInternalTasks()
         resetState()
     }
@@ -163,6 +253,39 @@ final class AdaptiveScrubEngine: ObservableObject {
         return min(max(raw, baseSpeed), durationAwareCap)
     }
 
+    private func requestFinePreview(at targetSeconds: Double, engine: AetherEngine, force: Bool) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if engine.supportsCacheBackedStills {
+            guard !isPreviewInFlight, force || (now - lastPreviewRequestUptime >= 0.075) else { return }
+            lastPreviewRequestUptime = now
+            isPreviewInFlight = true
+            let gen = engine.scrubPreviewSourceGeneration
+            previewTask = Task { [weak self] in
+                defer {
+                    Task { @MainActor in self?.isPreviewInFlight = false }
+                }
+                let frame = await engine.scrubPreviewFrame(
+                    atSeconds: targetSeconds,
+                    refined: true,
+                    maxWidth: 640,
+                    isCancelled: { Task.isCancelled }
+                )
+                await MainActor.run {
+                    guard let self, self.isFineScrubbing, engine.scrubPreviewSourceGeneration == gen else { return }
+                    if let frame {
+                        self.previewImage = frame.image
+                        self.previewUIImage = UIImage(cgImage: frame.image)
+                        self.previewActualTime = frame.actualSeconds
+                    } else {
+                        self.triggerThrottledLiveSeek(to: targetSeconds, speed: 4.0, engine: engine)
+                    }
+                }
+            }
+        } else {
+            triggerThrottledLiveSeek(to: targetSeconds, speed: 4.0, engine: engine)
+        }
+    }
+
     /// 根据当前倍速动态调整预览刷新间隔：快进越快，画面切换越快
     private func scheduleMatchedPreview(
         targetSeconds: Double,
@@ -203,8 +326,10 @@ final class AdaptiveScrubEngine: ObservableObject {
                 )
                 await MainActor.run {
                     guard let self, self.isScrubbing, engine.scrubPreviewSourceGeneration == gen else { return }
+                    // 仅在新帧解码成功后更新，保持上一帧直到新帧就绪，防止预览窗闪烁
                     if let frame {
                         self.previewImage = frame.image
+                        self.previewUIImage = UIImage(cgImage: frame.image)
                         self.previewActualTime = frame.actualSeconds
                     } else {
                         // 超出本地缓存区间时，触发节流主画面实时 Seek，保证画面持续跟随快进切换
@@ -249,10 +374,16 @@ final class AdaptiveScrubEngine: ObservableObject {
         isLiveSeekInFlight = false
     }
 
+    private func clearPreviewImages() {
+        previewImage = nil
+        previewUIImage = nil
+        previewActualTime = nil
+    }
+
     private func resetState() {
         isScrubbing = false
+        isFineScrubbing = false
         speedMultiplier = 1.0
-        previewImage = nil
-        previewActualTime = nil
+        clearPreviewImages()
     }
 }

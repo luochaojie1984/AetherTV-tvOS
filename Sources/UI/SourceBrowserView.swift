@@ -3,6 +3,7 @@ import SwiftUI
 struct SourceBrowserView: View {
     @EnvironmentObject private var sourceStore: MediaSourceStore
     @State private var showAddSourceSheet = false
+    @State private var editingSource: MediaSourceConfig?
 
     var body: some View {
         NavigationStack {
@@ -12,7 +13,7 @@ struct SourceBrowserView: View {
                         AppleTVSoundEffects.playSelect()
                         showAddSourceSheet = true
                     } label: {
-                        Label("添加局域网媒体源（SMB / WebDAV / Emby / Jellyfin / Plex / DLNA）", systemImage: "plus.circle.fill")
+                        Label("添加局域网媒体源（支持手机扫码 / 自动发现）", systemImage: "plus.circle.fill")
                             .font(.headline)
                     }
                 }
@@ -46,6 +47,9 @@ struct SourceBrowserView: View {
                                 .padding(.vertical, 6)
                             }
                             .contextMenu {
+                                Button("编辑此媒体源") {
+                                    editingSource = source
+                                }
                                 Button("删除此媒体源", role: .destructive) {
                                     sourceStore.remove(id: source.id)
                                 }
@@ -58,6 +62,11 @@ struct SourceBrowserView: View {
             .sheet(isPresented: $showAddSourceSheet) {
                 AddMediaSourceView { newSource in
                     sourceStore.add(newSource)
+                }
+            }
+            .sheet(item: $editingSource) { source in
+                AddMediaSourceView(editing: source) { updated in
+                    sourceStore.update(updated)
                 }
             }
         }
@@ -152,7 +161,7 @@ struct SourceDirectoryView: View {
                                             }
                                             if let pos = historyStore.savedPosition(for: item.id) {
                                                 Text("上次看到 \(BottomAppleProgressBar.formatTimestamp(pos))")
-                                                    .foregroundStyle(.cyan)
+                                                    .foregroundStyle(Color.cyan)
                                             }
                                         }
                                         .font(.caption)
@@ -228,14 +237,13 @@ struct SourceDirectoryView: View {
                 let parent = (currentPath == "/" || currentPath.isEmpty) ? nil : currentPath
                 items = try await client.browse(source: source, parentId: parent)
             case .dlna:
-                // DLNA 没有自动发现：必须由用户提供内容目录的 Control 地址路径
                 guard let path = source.dlnaControlPath else {
                     throw MediaServerError.missingControlURL
                 }
                 guard let url = URL(string: source.hostWithScheme + path) else {
                     throw MediaServerError.invalidURL
                 }
-                let client = DLNADiscoveryClient()
+                let client = DLNADiscoveryClient(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
                 items = try await client.browse(controlURL: url, objectId: currentPath, sourceId: source.id)
             case .smb:
                 // 每次列举都会登录、连接共享、断开；共享名与账号来自媒体源配置
@@ -253,24 +261,52 @@ struct SourceDirectoryView: View {
 struct AddMediaSourceView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var settings: PlayerSettingsStore
+
+    private let editingId: UUID?
     let onSave: (MediaSourceConfig) -> Void
 
-    @State private var name = "客厅 NAS"
-    @State private var protocolType: MediaProtocolType = .webdav
-    @State private var host = "192.168.1.10"
-    @State private var portText = "5005"
-    @State private var useHTTPS = false
-    @State private var basePath = "/"
-    @State private var shareName = "video"
-    @State private var username = ""
-    @State private var password = ""
-    @State private var apiToken = ""
-    @State private var userId = ""
-    @State private var limitSingleConnection = false
-    @State private var holdSourceConnection = false
+    @State private var name: String
+    @State private var protocolType: MediaProtocolType
+    @State private var host: String
+    @State private var portText: String
+    @State private var useHTTPS: Bool
+    @State private var basePath: String
+    @State private var shareName: String
+    @State private var username: String
+    @State private var password: String
+    @State private var apiToken: String
+    @State private var userId: String
+    @State private var limitSingleConnection: Bool
+    @State private var holdSourceConnection: Bool
+
     @State private var isTesting = false
     @State private var testSucceeded = false
     @State private var testMessage: String?
+
+    @State private var isAuthenticating = false
+    @State private var authFeedback: String?
+    @State private var discoveredUsers: [EmbyUserSummary] = []
+
+    @State private var showQRConfigSheet = false
+    @State private var showLANDiscoverySheet = false
+
+    init(editing: MediaSourceConfig? = nil, onSave: @escaping (MediaSourceConfig) -> Void) {
+        self.editingId = editing?.id
+        self.onSave = onSave
+        _name = State(initialValue: editing?.name ?? "客厅 NAS")
+        _protocolType = State(initialValue: editing?.protocolType ?? .webdav)
+        _host = State(initialValue: editing?.host ?? "192.168.1.10")
+        _portText = State(initialValue: editing.map { String($0.port) } ?? "5005")
+        _useHTTPS = State(initialValue: editing?.useHTTPS ?? false)
+        _basePath = State(initialValue: editing?.basePath ?? "/")
+        _shareName = State(initialValue: editing?.shareName ?? "video")
+        _username = State(initialValue: editing?.username ?? "")
+        _password = State(initialValue: editing?.password ?? "")
+        _apiToken = State(initialValue: editing?.apiToken ?? "")
+        _userId = State(initialValue: editing?.userId ?? "")
+        _limitSingleConnection = State(initialValue: editing?.limitSingleConnection ?? false)
+        _holdSourceConnection = State(initialValue: editing?.holdSourceConnection ?? false)
+    }
 
     private var usesControlPath: Bool {
         protocolType == .dlna
@@ -279,6 +315,22 @@ struct AddMediaSourceView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("快捷配置（免遥控器打字）") {
+                    Button {
+                        AppleTVSoundEffects.playSelect()
+                        showQRConfigSheet = true
+                    } label: {
+                        Label("手机扫码 / 网页填写配置", systemImage: "qrcode.viewfinder")
+                    }
+
+                    Button {
+                        AppleTVSoundEffects.playSelect()
+                        showLANDiscoverySheet = true
+                    } label: {
+                        Label("扫描局域网设备（Bonjour / DLNA）", systemImage: "dot.radiowaves.left.and.right")
+                    }
+                }
+
                 Section("基本连接") {
                     TextField("名称", text: $name)
                     Picker("协议类型", selection: $protocolType) {
@@ -288,17 +340,18 @@ struct AddMediaSourceView: View {
                     }
                     .onChange(of: protocolType) { _, newType in
                         portText = String(newType.defaultPort)
-                        // DLNA 没有自动发现，给一个常见服务器的 Control 路径示例，用户可改
                         if newType == .dlna && (basePath.isEmpty || basePath == "/") {
                             basePath = "/MediaServer/ContentDirectory/Control"
                         }
                         testMessage = nil
+                        authFeedback = nil
+                        discoveredUsers = []
                     }
                     TextField("服务器 IP 或主机名", text: $host)
                     TextField("端口（0 表示用默认端口）", text: $portText)
                     if usesControlPath {
                         TextField("DLNA Control 路径（如 /MediaServer/ContentDirectory/Control）", text: $basePath)
-                        Text("DLNA 不做自动发现，需要填写内容目录（ContentDirectory）的 Control 地址路径；不同服务器的路径不同，社区常见值：MiniDLNA 为 /ctl/ContentDir，Windows 媒体共享为 /ContentDirectory/Control。")
+                        Text("可用上方「扫描局域网设备」自动探测支持多播的 DLNA 设备；若自签环境受限，请填写 ContentDirectory 的 Control 路径（如 MiniDLNA 为 /ctl/ContentDir）。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     } else if protocolType == .smb {
@@ -310,11 +363,58 @@ struct AddMediaSourceView: View {
                 }
 
                 Section("身份认证") {
-                    if protocolType == .emby || protocolType == .jellyfin || protocolType == .plex {
-                        TextField("API Key / X-Plex-Token", text: $apiToken)
-                        if protocolType != .plex {
-                            TextField("用户 ID（可留空，自动取第一个用户）", text: $userId)
+                    if protocolType == .emby || protocolType == .jellyfin {
+                        TextField("API Key / AccessToken（可用下方账号登录自动获取）", text: $apiToken)
+                        TextField("用户名（用于账号登录，可留空）", text: $username)
+                        SecureField("密码（用于账号登录，可留空）", text: $password)
+                        Button {
+                            Task { await authenticateEmbyAccount() }
+                        } label: {
+                            HStack(spacing: 12) {
+                                if isAuthenticating { ProgressView() }
+                                Text(isAuthenticating ? "正在登录…" : "用账号密码登录并获取 Token / 用户 ID")
+                            }
                         }
+                        .disabled(isAuthenticating || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        TextField("用户 ID（可留空，或从下方列表选择）", text: $userId)
+                        Button("获取服务器用户列表") {
+                            Task { await loadEmbyUsers() }
+                        }
+                        .disabled(isAuthenticating || apiToken.isEmpty)
+
+                        if !discoveredUsers.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 12) {
+                                    ForEach(discoveredUsers) { user in
+                                        Button {
+                                            AppleTVSoundEffects.playSelect()
+                                            userId = user.id
+                                            authFeedback = "已选择用户：\(user.name)"
+                                        } label: {
+                                            HStack(spacing: 6) {
+                                                if userId == user.id {
+                                                    Image(systemName: "checkmark.circle.fill")
+                                                        .foregroundStyle(Color.green)
+                                                }
+                                                Text(user.isAdmin ? "\(user.name) (管理员)" : user.name)
+                                            }
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 8)
+                                        }
+                                        .buttonStyle(.bordered)
+                                    }
+                                }
+                            }
+                        }
+
+                        if let authFeedback {
+                            Text(authFeedback)
+                                .font(.footnote)
+                                .foregroundStyle(Color.cyan)
+                        }
+                    } else if protocolType == .plex {
+                        TextField("X-Plex-Token", text: $apiToken)
                     } else if protocolType != .dlna {
                         TextField("用户名（访客可留空）", text: $username)
                         SecureField("密码", text: $password)
@@ -344,19 +444,34 @@ struct AddMediaSourceView: View {
                 }
 
                 Section {
-                    Button("保存媒体源") {
+                    Button(editingId == nil ? "保存媒体源" : "保存修改") {
                         onSave(draftConfig)
                         dismiss()
                     }
                     .disabled(host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .navigationTitle("添加媒体源")
+            .navigationTitle(editingId == nil ? "添加媒体源" : "编辑媒体源")
+            .sheet(isPresented: $showQRConfigSheet) {
+                QuickConfigQRView { imported in
+                    applyConfig(imported)
+                    testMessage = "已通过手机扫码填入配置，请检查或测试后保存"
+                    testSucceeded = true
+                }
+            }
+            .sheet(isPresented: $showLANDiscoverySheet) {
+                LANDiscoverySheetView { service in
+                    applyDiscoveredService(service)
+                    testMessage = "已选择局域网设备「\(service.name)」，请补充认证信息或测试连接"
+                    testSucceeded = true
+                }
+            }
         }
     }
 
     private var draftConfig: MediaSourceConfig {
         MediaSourceConfig(
+            id: editingId ?? UUID(),
             name: name.isEmpty ? host : name,
             protocolType: protocolType,
             host: host,
@@ -371,6 +486,62 @@ struct AddMediaSourceView: View {
             limitSingleConnection: limitSingleConnection,
             holdSourceConnection: holdSourceConnection
         )
+    }
+
+    private func applyConfig(_ imported: MediaSourceConfig) {
+        name = imported.name
+        protocolType = imported.protocolType
+        host = imported.host
+        portText = String(imported.port)
+        useHTTPS = imported.useHTTPS
+        basePath = imported.basePath
+        shareName = imported.shareName
+        username = imported.username
+        password = imported.password
+        apiToken = imported.apiToken
+        userId = imported.userId
+        limitSingleConnection = imported.limitSingleConnection
+        holdSourceConnection = imported.holdSourceConnection
+    }
+
+    private func applyDiscoveredService(_ service: DiscoveredLANService) {
+        name = service.name
+        protocolType = service.protocolType
+        host = service.host
+        portText = String(service.port)
+        useHTTPS = service.useHTTPS
+        if let path = service.dlnaControlPath {
+            basePath = path
+        }
+    }
+
+    private func authenticateEmbyAccount() async {
+        isAuthenticating = true
+        authFeedback = nil
+        defer { isAuthenticating = false }
+        do {
+            let result = try await MediaServerClients(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
+                .authenticateEmby(source: draftConfig, username: username, password: password)
+            apiToken = result.accessToken
+            userId = result.userId
+            authFeedback = "登录成功，已获取「\(result.userName)」的 AccessToken 与用户 ID"
+        } catch {
+            authFeedback = error.localizedDescription
+        }
+    }
+
+    private func loadEmbyUsers() async {
+        isAuthenticating = true
+        authFeedback = nil
+        defer { isAuthenticating = false }
+        do {
+            let users = try await MediaServerClients(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
+                .fetchEmbyUsers(source: draftConfig)
+            discoveredUsers = users
+            authFeedback = users.isEmpty ? "服务器未返回用户" : "共获取 \(users.count) 个用户，请在上方点击选择"
+        } catch {
+            authFeedback = error.localizedDescription
+        }
     }
 
     /// 保存前先真读一次根目录：填错地址/账号时不用等保存后才发现
@@ -398,7 +569,7 @@ struct AddMediaSourceView: View {
             case .dlna:
                 guard let path = config.dlnaControlPath else { throw MediaServerError.missingControlURL }
                 guard let url = URL(string: config.hostWithScheme + path) else { throw MediaServerError.invalidURL }
-                count = try await DLNADiscoveryClient()
+                count = try await DLNADiscoveryClient(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
                     .browse(controlURL: url, objectId: "0", sourceId: config.id).count
             case .smb:
                 count = try await SMBSourceClient().listDirectory(source: config, path: "/").count
@@ -410,6 +581,148 @@ struct AddMediaSourceView: View {
         } catch {
             testSucceeded = false
             testMessage = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - 手机扫码配置浮层
+
+private struct QuickConfigQRView: View {
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var server = QuickConfigWebServer()
+    let onReceived: (MediaSourceConfig) -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 28) {
+                if let qrImage = server.qrImage {
+                    Image(uiImage: qrImage)
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: 300, height: 300)
+                        .padding(18)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                } else {
+                    ProgressView()
+                        .scaleEffect(1.4)
+                        .frame(width: 300, height: 300)
+                }
+
+                Text(server.statusMessage)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 780)
+
+                if let url = server.accessURLString {
+                    Text(url)
+                        .font(.system(.callout, design: .monospaced))
+                        .foregroundStyle(Color.cyan)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 8)
+                        .background(Color.white.opacity(0.08), in: Capsule())
+                }
+
+                Button("关闭") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding(48)
+            .navigationTitle("手机扫码快速配置")
+            .onAppear {
+                server.start()
+            }
+            .onDisappear {
+                server.stop()
+            }
+            .onChange(of: server.receivedConfig) { _, config in
+                if let config {
+                    onReceived(config)
+                    dismiss()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 局域网自动发现浮层（Bonjour + SSDP）
+
+private struct LANDiscoverySheetView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var settings: PlayerSettingsStore
+    @StateObject private var browser = LANServiceBrowser()
+    let onSelect: (DiscoveredLANService) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if browser.isScanning {
+                    HStack(spacing: 14) {
+                        ProgressView()
+                        Text("正在扫描局域网 Bonjour 与 DLNA 设备…")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if browser.dlnaMulticastBlocked {
+                    Label(
+                        "当前自签名环境未授予系统多播权限，DLNA SSDP 自动发现已被系统拦截；SMB / WebDAV / Emby / Jellyfin / Plex 的 Bonjour 扫描不受影响，DLNA 可回退手动填写 Control 路径。",
+                        systemImage: "info.circle"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(Color.orange)
+                }
+
+                if browser.discoveredServices.isEmpty && !browser.isScanning {
+                    Text("暂未发现支持广播的局域网媒体服务，可点击右上角重新扫描或手动填写。")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(browser.discoveredServices) { service in
+                        Button {
+                            AppleTVSoundEffects.playSelect()
+                            onSelect(service)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 16) {
+                                Image(systemName: service.protocolType.iconName)
+                                    .font(.title2)
+                                    .frame(width: 40)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(service.name)
+                                        .font(.headline)
+                                    Text("\(service.protocolType.rawValue) · \(service.host):\(service.port)\(service.dlnaControlPath ?? "")")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text("填入")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(Color.cyan)
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("发现的局域网设备")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("重新扫描") {
+                        browser.start(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
+                    }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                browser.start(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
+            }
+            .onDisappear {
+                browser.stop()
+            }
         }
     }
 }

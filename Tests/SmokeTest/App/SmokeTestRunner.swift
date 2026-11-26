@@ -108,8 +108,25 @@ enum SmokeTestRunner {
         await step("ui.home") {
             try await showcase("首页", HomeLibraryView()
                 .environmentObject(MediaSourceStore.shared)
-                .environmentObject(WatchHistoryStore.shared))
+                .environmentObject(WatchHistoryStore.shared)
+                .environmentObject(PlayerSettingsStore.shared))
         }
+
+        await step("unit.keychainAndSanitization") {
+            try runKeychainAndSanitizationTests()
+        }
+        await step("unit.dlnaXmlAndSSDP") {
+            try runDLNAXmlAndSSDPTests()
+        }
+        await step("unit.smbSubtitleMatching") {
+            try runSMBSubtitleMatchingTests()
+        }
+        await step("unit.hostNormalization") {
+            try runHostNormalizationTests()
+        }
+
+        // 确保前置单元测试完成后媒体源仍为冒烟测试夹具配置
+        MediaSourceStore.shared.sources = [webdav] + (smb.map { [$0] } ?? [])
 
         var webdavMovie: MediaItem?
         await step("browse.webdav.root") {
@@ -141,7 +158,8 @@ enum SmokeTestRunner {
                 guard let movie = items.first(where: { $0.title == "sample.mkv" }) else {
                     throw SmokeTestFailure.failed("SMB /Movies 里没有 sample.mkv：\(describe(items))")
                 }
-                return try await play(movie, source: smb, wantSubtitles: false)
+                try require(movie.externalSubtitles.count == 2, "SMB sample.mkv 应匹配 2 条同目录外挂字幕：\(describe(items))")
+                return try await play(movie, source: smb, wantSubtitles: true)
             }
         }
 
@@ -259,7 +277,9 @@ enum SmokeTestRunner {
         host.view.backgroundColor = .black
         present(host)
 
-        let engine = controller.engine
+        guard let engine = controller.engine else {
+            throw SmokeTestFailure.failed("PlaybackController 初始化引擎失败：\(controller.activeErrorMessage ?? "未知")")
+        }
         do {
             try await waitFor("开始播放", 45) {
                 if case .error = engine.state { return true }
@@ -354,6 +374,159 @@ enum SmokeTestRunner {
     static func dismissAll() async {
         rootViewController()?.dismiss(animated: false)
         try? await Task.sleep(nanoseconds: 600_000_000)
+    }
+
+    // MARK: - 单元测试（Keychain / 脱敏 / XML 转义 / SMB 字幕 / Host 清理）
+
+    static func runKeychainAndSanitizationTests() throws -> String {
+        let probeId = UUID()
+        let creds = SourceCredentials(password: "P@ssSecret!9", apiToken: "TokSecret_ABC")
+        KeychainCredentialStore.shared.save(creds, for: probeId)
+        let loaded = KeychainCredentialStore.shared.load(for: probeId)
+        try require(loaded == creds, "Keychain 存取往返不匹配")
+        let backend = KeychainCredentialStore.shared.isUsingMemoryFallback
+            ? "mem-fallback(\(KeychainCredentialStore.shared.lastStatus))"
+            : "native-keychain"
+        KeychainCredentialStore.shared.delete(for: probeId)
+        try require(KeychainCredentialStore.shared.load(for: probeId) == nil, "Keychain 删除后仍可读出凭据")
+
+        // 验证 MediaSourceStore 迁移旧明文数据并在 UserDefaults 中清除密码/Token
+        let legacyId = UUID()
+        let legacySource = MediaSourceConfig(
+            id: legacyId,
+            name: "Legacy Emby",
+            protocolType: .emby,
+            host: "192.168.1.99",
+            port: 8096,
+            username: "alice",
+            password: "LegacyPassword!123",
+            apiToken: "LegacyToken!456"
+        )
+        let encodedLegacy = try JSONEncoder().encode([legacySource])
+        UserDefaults.standard.set(encodedLegacy, forKey: "AetherTV.MediaSources.v1")
+        MediaSourceStore.shared.reloadFromStorage()
+
+        let migratedInMemory = MediaSourceStore.shared.sources.first(where: { $0.id == legacyId })
+        try require(migratedInMemory?.password == "LegacyPassword!123", "旧数据迁移后内存中密码缺失")
+        try require(migratedInMemory?.apiToken == "LegacyToken!456", "旧数据迁移后内存中 Token 缺失")
+
+        let storedSourceData = UserDefaults.standard.data(forKey: "AetherTV.MediaSources.v1") ?? Data()
+        let storedSourceJSON = String(data: storedSourceData, encoding: .utf8) ?? ""
+        try require(!storedSourceJSON.contains("LegacyPassword!123"), "UserDefaults 中仍存在明文 password")
+        try require(!storedSourceJSON.contains("LegacyToken!456"), "UserDefaults 中仍存在明文 apiToken")
+        MediaSourceStore.shared.remove(id: legacyId)
+
+        // 验证 WatchHistoryStore 脱敏（httpHeaders、URL Query、externalSubtitles）及单片轨道记忆
+        let secretItem = MediaItem(
+            id: "unit:secret:item",
+            title: "Secret Movie",
+            isDirectory: false,
+            streamURL: URL(string: "http://192.168.1.20:8096/Videos/1/stream?Static=true&api_key=LEAK_API_KEY"),
+            posterURL: URL(string: "http://192.168.1.20:8096/Items/1/Images/Primary?maxWidth=480&X-Plex-Token=LEAK_PLEX_TOKEN"),
+            durationSeconds: 1200,
+            sourceId: nil,
+            protocolType: .emby,
+            remotePath: "1",
+            httpHeaders: [
+                "Authorization": "Basic LEAK_BASIC",
+                "X-Emby-Token": "LEAK_EMBY",
+                "X-Emby-Authorization": "MediaBrowser Token=\"LEAK_EMBY_AUTH\"",
+                "X-Plex-Token": "LEAK_PLEX_HDR",
+                "Cookie": "session=LEAK_COOKIE",
+                "User-Agent": "AetherTV/1.0"
+            ],
+            externalSubtitles: [
+                ExternalSubtitleReference(
+                    title: "sub.srt",
+                    language: "zh",
+                    url: URL(string: "http://192.168.1.20:8096/Subtitles/0/Stream.srt?api_key=LEAK_SUB_KEY")!,
+                    formatHint: "srt",
+                    httpHeaders: ["X-Emby-Token": "LEAK_SUB_HDR", "Accept": "*/*"]
+                )
+            ],
+            serverItemId: "1"
+        )
+
+        WatchHistoryStore.shared.recordProgress(item: secretItem, position: 120, duration: 1200)
+        WatchHistoryStore.shared.recordTrackSelection(
+            for: secretItem,
+            audioTrackId: 2,
+            primarySubtitleTrackId: 100_001,
+            secondarySubtitleTrackId: 5,
+            aspectMode: .aspectFill
+        )
+        WatchHistoryStore.shared.toggleFavorite(secretItem)
+
+        let historyJSON = String(data: UserDefaults.standard.data(forKey: "AetherTV.WatchHistory.v1") ?? Data(), encoding: .utf8) ?? ""
+        let favJSON = String(data: UserDefaults.standard.data(forKey: "AetherTV.Favorites.v1") ?? Data(), encoding: .utf8) ?? ""
+        for forbidden in ["LEAK_API_KEY", "LEAK_PLEX_TOKEN", "LEAK_BASIC", "LEAK_EMBY", "LEAK_EMBY_AUTH", "LEAK_PLEX_HDR", "LEAK_COOKIE", "LEAK_SUB_KEY", "LEAK_SUB_HDR"] {
+            try require(!historyJSON.contains(forbidden), "观看记录落盘包含未脱敏凭据：\(forbidden)")
+            try require(!favJSON.contains(forbidden), "收藏夹落盘包含未脱敏凭据：\(forbidden)")
+        }
+        try require(historyJSON.contains("AetherTV\\/1.0") || historyJSON.contains("AetherTV/1.0"), "脱敏误删了非敏感 User-Agent")
+
+        let memory = WatchHistoryStore.shared.trackMemory(for: secretItem.id)
+        try require(memory?.audioTrackId == 2 && memory?.primarySubtitleTrackId == 100_001 && memory?.secondarySubtitleTrackId == 5 && memory?.aspectMode == .aspectFill,
+                    "单片轨道与画面比例记忆未正确保存")
+
+        WatchHistoryStore.shared.clearProgress(for: secretItem.id)
+        WatchHistoryStore.shared.toggleFavorite(secretItem)
+        return "keychain=\(backend), migration+sanitization+trackMemory OK"
+    }
+
+    static func runDLNAXmlAndSSDPTests() throws -> String {
+        let escaped = DLNADiscoveryClient.xmlEscape("0&a<b\"c'd>")
+        try require(escaped == "0&amp;a&lt;b&quot;c&apos;d&gt;", "DLNA XML 转义错误：\(escaped)")
+
+        let ssdpSample = "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nLocation: http://192.168.1.50:8200/rootDesc.xml\r\nST: urn:schemas-upnp-org:service:ContentDirectory:1\r\n\r\n"
+        let locs = DLNADiscoveryClient.parseSSDPResponseLocations(ssdpSample)
+        try require(locs.first?.absoluteString == "http://192.168.1.50:8200/rootDesc.xml", "SSDP LOCATION 解析失败：\(locs)")
+
+        let xml = """
+        <?xml version="1.0"?>
+        <root xmlns="urn:schemas-upnp-org:device-1-0">
+          <device>
+            <friendlyName>LivingRoom NAS</friendlyName>
+            <serviceList>
+              <service>
+                <serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>
+                <controlURL>/ctl/ContentDir</controlURL>
+              </service>
+            </serviceList>
+          </device>
+        </root>
+        """
+        let dev = DLNADiscoveryClient.parseDeviceDescription(
+            data: Data(xml.utf8),
+            locationURL: URL(string: "http://192.168.1.50:8200/rootDesc.xml")!
+        )
+        try require(dev?.friendlyName == "LivingRoom NAS", "DLNA friendlyName 解析失败")
+        try require(dev?.controlURL.absoluteString == "http://192.168.1.50:8200/ctl/ContentDir", "DLNA controlURL 解析失败：\(dev?.controlURL.absoluteString ?? "nil")")
+        return "xmlEscape + SSDP + DeviceXML OK"
+    }
+
+    static func runSMBSubtitleMatchingTests() throws -> String {
+        let matched = SMBSourceClient.matchSubtitles(
+            videoName: "Ep1.mkv",
+            subtitleFiles: ["Ep1.zh.ass", "Ep1.en.srt", "Ep10.zh.srt", "other.srt"]
+        )
+        try require(matched == ["Ep1.zh.ass", "Ep1.en.srt"], "SMB 字幕边界匹配失败：\(matched)")
+
+        let nfdSub = "Cafe\u{0301}.zh.srt"
+        let nfdMatched = SMBSourceClient.matchSubtitles(videoName: "Café.mkv", subtitleFiles: [nfdSub])
+        try require(nfdMatched == [nfdSub] && nfdMatched.first?.unicodeScalars.count == nfdSub.unicodeScalars.count,
+                    "SMB 字幕匹配未保留服务器原始字节")
+        return "matched=\(matched.count), rawBytesPreserved=true"
+    }
+
+    static func runHostNormalizationTests() throws -> String {
+        let cfg1 = MediaSourceConfig(name: "t1", protocolType: .webdav, host: "  Http://192.168.1.10/  ", port: 5005)
+        let cfg2 = MediaSourceConfig(name: "t2", protocolType: .smb, host: "Smb://nas.local/", port: 445)
+        let cfg3 = MediaSourceConfig(name: "t3", protocolType: .emby, host: "HTTPS://emby.home/", port: 443, useHTTPS: true)
+        try require(cfg1.cleanedHost == "192.168.1.10", "Http:// 前缀未清除：\(cfg1.cleanedHost)")
+        try require(cfg2.cleanedHost == "nas.local", "Smb:// 前缀未清除：\(cfg2.cleanedHost)")
+        try require(cfg3.cleanedHost == "emby.home", "HTTPS:// 前缀未清除：\(cfg3.cleanedHost)")
+        return "case-insensitive host cleanup OK"
     }
 
     static var resultURL: URL {

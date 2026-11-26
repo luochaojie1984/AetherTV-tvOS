@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 import Combine
 import AVFoundation
 import AetherEngine
@@ -7,7 +8,7 @@ import AetherEngineSMB
 
 @MainActor
 final class PlaybackController: ObservableObject {
-    let engine: AetherEngine
+    let engine: AetherEngine?
     let scrubEngine = AdaptiveScrubEngine()
 
     @Published private(set) var currentItem: MediaItem?
@@ -17,26 +18,44 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var activeErrorMessage: String?
     @Published private(set) var sleepTimerRemainingMinutes: Int = 0
     @Published private(set) var isPrewarmingNextEpisode: Bool = false
+    @Published private(set) var activeAspectMode: VideoAspectMode = PlayerSettingsStore.shared.aspectMode
+    @Published private(set) var routeRemovalEventCount: Int = 0
 
     private let settings = PlayerSettingsStore.shared
     private let historyStore = WatchHistoryStore.shared
     private var cancellables = Set<AnyCancellable>()
     private var historySaveTask: Task<Void, Never>?
     private var sleepTimerTask: Task<Void, Never>?
+    private var routeObserver: NSObjectProtocol?
     private var hasPrewarmedNext = false
+    private var wasPausedState = false
+    private var activeSourceConfig: MediaSourceConfig?
+    private var activeTempSubtitleDirectory: URL?
+
+    private static let nonHDMIRouteRemovalPorts: Set<AVAudioSession.Port> = [
+        .headphones,
+        .bluetoothA2DP,
+        .bluetoothLE,
+        .bluetoothHFP,
+        .airPlay,
+        .usbAudio
+    ]
 
     init() {
         do {
-            self.engine = try AetherEngine()
+            let instance = try AetherEngine()
+            self.engine = instance
+            // AetherEngine 宿主契约：原生路径默认由 AVPlayerViewController 在 play() 时激活音频会话；
+            // 本应用用的是裸播放层 AetherPlayerSurface，没有人替它激活，必须交给引擎自己来做，
+            // 否则 HDMI 音频路由不会协商（原生路径无声或不出多声道）。
+            instance.nativeAudioSessionActivationEnabled = true
+            scrubEngine.attach(engine: instance)
+            bindEngineObservers(instance)
+            installAudioRouteObserver()
         } catch {
-            fatalError("无法初始化 AetherEngine: \(error.localizedDescription)")
+            self.engine = nil
+            self.activeErrorMessage = "无法初始化播放引擎：\(error.localizedDescription)"
         }
-        // AetherEngine 宿主契约：原生路径默认由 AVPlayerViewController 在 play() 时激活音频会话；
-        // 本应用用的是裸播放层 AetherPlayerSurface，没有人替它激活，必须交给引擎自己来做，
-        // 否则 HDMI 音频路由不会协商（原生路径无声或不出多声道）。
-        engine.nativeAudioSessionActivationEnabled = true
-        scrubEngine.attach(engine: engine)
-        bindEngineObservers()
     }
 
     var hasNextEpisode: Bool {
@@ -50,36 +69,77 @@ final class PlaybackController: ObservableObject {
     // MARK: - 加载与播放
 
     func load(item: MediaItem, playlist: [MediaItem] = [], sourceConfig: MediaSourceConfig? = nil) async {
+        guard let engine else {
+            activeErrorMessage = activeErrorMessage ?? "播放引擎未能初始化，请返回后重试。"
+            return
+        }
+
         cancelTimers()
         scrubEngine.cancel()
+        cleanupTempSubtitles()
         activeErrorMessage = nil
         hasPrewarmedNext = false
+        wasPausedState = false
 
         self.currentItem = item
         self.playlist = playlist.isEmpty ? [item] : playlist
         self.currentIndex = self.playlist.firstIndex(where: { $0.id == item.id }) ?? 0
+
+        let resolvedSource = resolveSourceConfig(for: item, explicit: sourceConfig)
+        self.activeSourceConfig = resolvedSource
 
         guard let streamURL = item.streamURL else {
             activeErrorMessage = "该媒体条目没有有效的播放地址。"
             return
         }
 
-        let options = buildLoadOptions(item: item, sourceConfig: sourceConfig)
+        let trackMemory = historyStore.trackMemory(for: item.id)
+        activeAspectMode = trackMemory?.aspectMode ?? settings.aspectMode
+        applyVideoGravity()
+
+        var effectiveExternalSubs = item.externalSubtitles
+        if item.protocolType == .smb,
+           !item.externalSubtitles.isEmpty,
+           let smbSource = resolvedSource {
+            let tempDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("AetherTVSubtitles", isDirectory: true)
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            if let downloaded = try? await SMBSourceClient().downloadSubtitles(
+                source: smbSource,
+                subtitles: item.externalSubtitles,
+                destinationDirectory: tempDir
+            ), !downloaded.isEmpty {
+                activeTempSubtitleDirectory = tempDir
+                effectiveExternalSubs = downloaded
+            }
+        }
+
+        let options = buildLoadOptions(
+            item: item,
+            sourceConfig: resolvedSource,
+            externalSubtitles: effectiveExternalSubs
+        )
+
         let startPosition: Double
-        if settings.autoResumePlayback, let saved = historyStore.savedPosition(for: item.id) {
-            startPosition = saved
+        if settings.autoResumePlayback {
+            if let localSaved = historyStore.savedPosition(for: item.id) {
+                startPosition = localSaved
+            } else if let remoteSaved = item.serverResumeSeconds, remoteSaved > 8 {
+                startPosition = remoteSaved
+            } else {
+                startPosition = 0
+            }
         } else {
             startPosition = 0
         }
 
-        applyVideoGravity()
-
         do {
             if item.protocolType == .smb {
                 try await loadOverSMB(
+                    engine: engine,
                     url: streamURL,
                     item: item,
-                    source: sourceConfig,
+                    source: resolvedSource,
                     startPosition: startPosition,
                     options: options
                 )
@@ -91,10 +151,12 @@ final class PlaybackController: ObservableObject {
                 )
             }
             applyAudioShaping()
+            restoreTrackSelectionsIfSaved(memory: trackMemory, engine: engine)
             if playbackRate != 1.0 {
                 engine.setRate(playbackRate)
             }
             startPeriodicHistorySave()
+            reportServerProgress(event: .started)
         } catch is CancellationError {
             // 被新的 load() 或 stop() 取代，按 AetherEngine 契约不视为播放错误
         } catch {
@@ -106,6 +168,7 @@ final class PlaybackController: ObservableObject {
     /// 再把文件包成 IOReader 交给引擎；reader 的关闭由引擎在拆解会话时负责。
     /// 凭据不写进 URL（否则会随观看记录/收藏落盘），而是按媒体源 ID 回查配置。
     private func loadOverSMB(
+        engine: AetherEngine,
         url: URL,
         item: MediaItem,
         source: MediaSourceConfig?,
@@ -138,36 +201,68 @@ final class PlaybackController: ObservableObject {
 
     func stopAndDismiss() {
         saveCurrentProgressNow()
+        reportServerProgress(event: .stopped)
         cancelTimers()
         scrubEngine.cancel()
-        engine.stop(resetDisplayCriteria: true, finalTeardown: true)
+        setIdleTimerDisabled(false)
+        removeAudioRouteObserver()
+        cleanupTempSubtitles()
+        engine?.stop(resetDisplayCriteria: true, finalTeardown: true)
+    }
+
+    func handleScenePhaseChange(_ phase: ScenePhase) {
+        switch phase {
+        case .background:
+            saveCurrentProgressNow()
+            reportServerProgress(event: .paused)
+            setIdleTimerDisabled(false)
+        case .active:
+            guard let engine, engine.needsForegroundVideoRestore else { return }
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await engine.reloadAtCurrentPosition()
+                } catch {
+                    if let item = self.currentItem {
+                        await self.load(item: item, playlist: self.playlist, sourceConfig: self.activeSourceConfig)
+                    }
+                }
+            }
+        default:
+            break
+        }
     }
 
     func togglePlayPause() {
+        guard let engine else { return }
         AppleTVSoundEffects.playSelect()
         if engine.state == .ended, let item = currentItem {
-            Task { await load(item: item, playlist: playlist) }
+            Task { await load(item: item, playlist: playlist, sourceConfig: activeSourceConfig) }
             return
         }
         engine.togglePlayPause()
     }
 
     func skipIntro() {
+        guard let engine else { return }
         AppleTVSoundEffects.playSelect()
         let target = min(engine.clock.currentTime + Double(settings.skipIntroSeconds), max(engine.duration - 1, 0))
         Task { await engine.seek(to: target) }
     }
 
     func playNextEpisode() {
-        guard let next = nextEpisodeItem else { return }
+        guard let engine, let next = nextEpisodeItem else { return }
         AppleTVSoundEffects.playSelect()
+        saveCurrentProgressNow()
+        reportServerProgress(event: .stopped)
         engine.prepareForItemReplacement()
         Task {
-            await load(item: next, playlist: playlist)
+            await load(item: next, playlist: playlist, sourceConfig: activeSourceConfig)
         }
     }
 
     func setRate(_ rate: Float) {
+        guard let engine else { return }
         let clamped = min(max(rate, 0.5), engine.maxSupportedRate)
         playbackRate = clamped
         engine.setRate(clamped)
@@ -176,14 +271,66 @@ final class PlaybackController: ObservableObject {
     func setAudioDelay(_ seconds: Double) {
         let clamped = min(max(seconds, -2.0), 2.0)
         settings.audioDelaySeconds = clamped
-        engine.setAudioDelay(clamped)
+        engine?.setAudioDelay(clamped)
+    }
+
+    func setAspectMode(_ mode: VideoAspectMode) {
+        activeAspectMode = mode
+        settings.aspectMode = mode
+        applyVideoGravity()
+        if let item = currentItem {
+            historyStore.recordTrackSelection(for: item, aspectMode: mode)
+        }
     }
 
     func applyVideoGravity() {
-        engine.videoGravity = (settings.aspectMode == .aspectFill) ? .resizeAspectFill : .resizeAspect
+        engine?.videoGravity = (activeAspectMode == .aspectFill) ? .resizeAspectFill : .resizeAspect
+    }
+
+    // MARK: - 音轨 / 字幕选择与单片记忆
+
+    func selectAudioTrack(index: Int) {
+        guard let engine else { return }
+        engine.selectAudioTrack(index: index)
+        if let item = currentItem {
+            historyStore.recordTrackSelection(for: item, audioTrackId: index)
+        }
+    }
+
+    func selectPrimarySubtitleTrack(index: Int) {
+        guard let engine else { return }
+        engine.selectSubtitleTrack(index: index)
+        if let item = currentItem {
+            historyStore.recordTrackSelection(for: item, primarySubtitleTrackId: index)
+        }
+    }
+
+    func clearPrimarySubtitle() {
+        guard let engine else { return }
+        engine.clearSubtitle()
+        if let item = currentItem {
+            historyStore.recordTrackSelection(for: item, primarySubtitleDisabled: true)
+        }
+    }
+
+    func selectSecondarySubtitleTrack(index: Int) {
+        guard let engine else { return }
+        engine.selectSecondarySubtitleTrack(index: index)
+        if let item = currentItem {
+            historyStore.recordTrackSelection(for: item, secondarySubtitleTrackId: index)
+        }
+    }
+
+    func clearSecondarySubtitle() {
+        guard let engine else { return }
+        engine.clearSecondarySubtitle()
+        if let item = currentItem {
+            historyStore.recordTrackSelection(for: item, clearSecondarySubtitle: true)
+        }
     }
 
     func applyDecodePreferenceLive() {
+        guard let engine else { return }
         Task {
             do {
                 try await engine.reloadAtCurrentPosition { opts in
@@ -199,6 +346,7 @@ final class PlaybackController: ObservableObject {
     }
 
     func applyAudioShaping() {
+        guard let engine else { return }
         // AetherEngine 的 setAudioShaping 只接受非可选的 AudioShaping；
         // 全部保持默认值（对白增益 0、无压缩、无响度目标）就等于关闭塑形。
         let compressor: AudioShaping.Compressor? = settings.nightModeEnabled
@@ -225,17 +373,39 @@ final class PlaybackController: ObservableObject {
                 self?.sleepTimerRemainingMinutes = remaining
             }
             if !Task.isCancelled {
-                self?.engine.pause()
+                self?.engine?.pause()
                 self?.saveCurrentProgressNow()
+                self?.reportServerProgress(event: .paused)
             }
         }
     }
 
-    // MARK: - LoadOptions 组装（含局域网避坑配置）
+    // MARK: - LoadOptions 组装（含局域网避坑配置与 Keychain 动态鉴权注入）
 
-    private func buildLoadOptions(item: MediaItem, sourceConfig: MediaSourceConfig?) -> LoadOptions {
+    private func resolveSourceConfig(for item: MediaItem, explicit: MediaSourceConfig?) -> MediaSourceConfig? {
+        if let explicit { return explicit }
+        guard let sourceId = item.sourceId else { return nil }
+        return MediaSourceStore.shared.sources.first { $0.id == sourceId }
+    }
+
+    private func hydratedHeaders(for item: MediaItem, sourceConfig: MediaSourceConfig?) -> [String: String] {
+        var headers = item.httpHeaders
+        if let sourceConfig {
+            for (key, value) in NetworkPitfallGuards.standardHTTPHeaders(for: sourceConfig) {
+                headers[key] = value
+            }
+        }
+        return headers
+    }
+
+    private func buildLoadOptions(
+        item: MediaItem,
+        sourceConfig: MediaSourceConfig?,
+        externalSubtitles: [ExternalSubtitleReference]
+    ) -> LoadOptions {
         var options = LoadOptions()
-        options.httpHeaders = item.httpHeaders
+        let freshHeaders = hydratedHeaders(for: item, sourceConfig: sourceConfig)
+        options.httpHeaders = freshHeaders
         options.preferredAudioLanguages = settings.parsedAudioLanguages
         options.preferredSubtitleLanguages = settings.parsedSubtitleLanguages
         options.preferredDecodePath = (settings.decodePreference == .software) ? .software : .automatic
@@ -260,14 +430,24 @@ final class PlaybackController: ObservableObject {
             }
         }
 
-        // 注入同目录 / 媒体服外挂字幕
-        if !item.externalSubtitles.isEmpty {
-            options.externalSubtitles = item.externalSubtitles.map { sub in
-                ExternalSubtitleTrack(
+        // 注入同目录 / 媒体服外挂字幕（远端字幕补全最新鉴权头，SMB 本地字幕无需头）
+        if !externalSubtitles.isEmpty {
+            options.externalSubtitles = externalSubtitles.map { sub in
+                let subHeaders: [String: String]?
+                if sub.url.isFileURL {
+                    subHeaders = nil
+                } else {
+                    var merged = sub.httpHeaders
+                    for (k, v) in freshHeaders where merged[k] == nil {
+                        merged[k] = v
+                    }
+                    subHeaders = merged.isEmpty ? nil : merged
+                }
+                return ExternalSubtitleTrack(
                     url: sub.url,
                     name: sub.title,
                     language: sub.language,
-                    httpHeaders: sub.httpHeaders.isEmpty ? nil : sub.httpHeaders,
+                    httpHeaders: subHeaders,
                     formatHint: sub.formatHint
                 )
             }
@@ -275,18 +455,50 @@ final class PlaybackController: ObservableObject {
         return options
     }
 
-    // MARK: - 观察与自动续播/下一集预热
+    private func restoreTrackSelectionsIfSaved(memory: WatchHistoryEntry?, engine: AetherEngine) {
+        guard let memory else { return }
+        if let audioId = memory.audioTrackId,
+           engine.audioTracks.contains(where: { $0.id == audioId }),
+           engine.activeAudioTrackIndex != audioId {
+            engine.selectAudioTrack(index: audioId)
+        }
+        if memory.primarySubtitleDisabled == true {
+            engine.clearSubtitle()
+        } else if let subId = memory.primarySubtitleTrackId,
+                  engine.subtitleTracks.contains(where: { $0.id == subId }) {
+            engine.selectSubtitleTrack(index: subId)
+        }
+        if let secondaryId = memory.secondarySubtitleTrackId,
+           engine.subtitleTracks.contains(where: { $0.id == secondaryId }) {
+            engine.selectSecondarySubtitleTrack(index: secondaryId)
+        }
+    }
 
-    private func bindEngineObservers() {
+    // MARK: - 观察、防休眠、音频路由与自动续播
+
+    private func bindEngineObservers(_ engine: AetherEngine) {
         engine.$state
             .receive(on: RunLoop.main)
             .sink { [weak self] state in
                 guard let self else { return }
+                let keepAwake = (state == .playing || state == .buffering || state == .seeking)
+                self.setIdleTimerDisabled(keepAwake)
+
                 switch state {
+                case .playing:
+                    if self.wasPausedState {
+                        self.wasPausedState = false
+                        self.reportServerProgress(event: .playing)
+                    }
+                case .paused:
+                    self.wasPausedState = true
+                    self.saveCurrentProgressNow()
+                    self.reportServerProgress(event: .paused)
                 case .error(let msg):
                     self.activeErrorMessage = self.formatEngineError(fallback: msg)
                 case .ended:
                     self.saveCurrentProgressNow()
+                    self.reportServerProgress(event: .stopped)
                     if self.settings.autoPlayNextEpisode && self.hasNextEpisode {
                         self.playNextEpisode()
                     }
@@ -297,6 +509,49 @@ final class PlaybackController: ObservableObject {
             .store(in: &cancellables)
     }
 
+    private func installAudioRouteObserver() {
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let userInfo = notification.userInfo,
+                  let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue),
+                  reason == .oldDeviceUnavailable,
+                  let previousRoute = userInfo[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription else {
+                return
+            }
+            // 仅在蓝牙耳机 / AirPods / 耳机 / AirPlay / USB 音频断开时暂停，
+            // 绝不拦截 HDMI 热插拔（Apple TV 匹配动态范围/帧率或 eARC 切换会触发 HDMI 路由重建）
+            let removedNonHDMI = previousRoute.outputs.contains { Self.nonHDMIRouteRemovalPorts.contains($0.portType) }
+            guard removedNonHDMI else { return }
+
+            Task { @MainActor [weak self] in
+                guard let self, let engine = self.engine else { return }
+                if engine.state == .playing || engine.state == .seeking {
+                    engine.pause()
+                    self.saveCurrentProgressNow()
+                    self.reportServerProgress(event: .paused)
+                    self.routeRemovalEventCount &+= 1
+                }
+            }
+        }
+    }
+
+    private func removeAudioRouteObserver() {
+        if let routeObserver {
+            NotificationCenter.default.removeObserver(routeObserver)
+            self.routeObserver = nil
+        }
+    }
+
+    private func setIdleTimerDisabled(_ disabled: Bool) {
+        if UIApplication.shared.isIdleTimerDisabled != disabled {
+            UIApplication.shared.isIdleTimerDisabled = disabled
+        }
+    }
+
     private func startPeriodicHistorySave() {
         historySaveTask?.cancel()
         historySaveTask = Task { [weak self] in
@@ -304,13 +559,16 @@ final class PlaybackController: ObservableObject {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard let self, !Task.isCancelled else { break }
                 self.saveCurrentProgressNow()
+                if self.engine?.state == .playing {
+                    self.reportServerProgress(event: .playing)
+                }
                 self.maybePrewarmNextEpisode()
             }
         }
     }
 
     private func saveCurrentProgressNow() {
-        guard let item = currentItem, engine.duration > 10 else { return }
+        guard let engine, let item = currentItem, engine.duration > 10 else { return }
         historyStore.recordProgress(
             item: item,
             position: engine.clock.currentTime,
@@ -318,10 +576,32 @@ final class PlaybackController: ObservableObject {
         )
     }
 
+    private func reportServerProgress(event: PlaybackSyncEvent) {
+        guard let engine,
+              let item = currentItem,
+              item.protocolType == .emby || item.protocolType == .jellyfin || item.protocolType == .plex,
+              let source = resolveSourceConfig(for: item, explicit: activeSourceConfig) else {
+            return
+        }
+        let pos = engine.clock.currentTime
+        let dur = engine.duration
+        let allowSelfSigned = settings.allowSelfSignedCertificates
+        Task.detached(priority: .utility) {
+            await MediaServerClients(allowSelfSignedLAN: allowSelfSigned).reportProgress(
+                source: source,
+                item: item,
+                positionSeconds: pos,
+                durationSeconds: dur,
+                event: event
+            )
+        }
+    }
+
     /// 距离片尾不足 90 秒时，利用 AetherEngine.prewarm 预热下一集开头数据，实现无缝切集
     /// （prewarm 只走 HTTP Range 请求，SMB 条目不参与预热）
     private func maybePrewarmNextEpisode() {
-        guard !hasPrewarmedNext,
+        guard let engine,
+              !hasPrewarmedNext,
               settings.autoPlayNextEpisode,
               let next = nextEpisodeItem,
               next.protocolType != .smb,
@@ -332,8 +612,10 @@ final class PlaybackController: ObservableObject {
         }
         hasPrewarmedNext = true
         isPrewarmingNextEpisode = true
+        let nextSource = resolveSourceConfig(for: next, explicit: activeSourceConfig)
+        let headers = hydratedHeaders(for: next, sourceConfig: nextSource)
         Task.detached { [weak self] in
-            _ = await AetherEngine.prewarm(url: nextURL, httpHeaders: next.httpHeaders)
+            _ = await AetherEngine.prewarm(url: nextURL, httpHeaders: headers)
             guard let self else { return }
             await MainActor.run {
                 self.isPrewarmingNextEpisode = false
@@ -341,8 +623,15 @@ final class PlaybackController: ObservableObject {
         }
     }
 
+    private func cleanupTempSubtitles() {
+        if let dir = activeTempSubtitleDirectory {
+            try? FileManager.default.removeItem(at: dir)
+            activeTempSubtitleDirectory = nil
+        }
+    }
+
     private func formatEngineError(fallback: String) -> String {
-        guard let info = engine.errorInfo else { return fallback }
+        guard let info = engine?.errorInfo else { return fallback }
         switch info.kind {
         case .sourceCertificateRejected:
             return "HTTPS 证书校验未通过（错误码 \(info.underlyingCode ?? 0)）。若为局域网自签名服务，请在设置中开启「信任局域网自签名证书」。"
@@ -356,7 +645,7 @@ final class PlaybackController: ObservableObject {
     }
 
     private func describeError(_ error: Error) -> String {
-        if let info = engine.errorInfo {
+        if let info = engine?.errorInfo {
             return formatEngineError(fallback: info.message)
         }
         return error.localizedDescription

@@ -8,6 +8,7 @@ struct PlayerScreenView: View {
     let sourceConfig: MediaSourceConfig?
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var settings: PlayerSettingsStore
     @StateObject private var controller: PlaybackController
 
@@ -27,123 +28,146 @@ struct PlayerScreenView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            // 1. AetherEngine 原生渲染层（自动管理 AVPlayerLayer / AVSampleBufferDisplayLayer）
-            AetherPlayerSurface(engine: controller.engine)
+            if let engine = controller.engine {
+                // 1. AetherEngine 原生渲染层（自动管理 AVPlayerLayer / AVSampleBufferDisplayLayer）
+                AetherPlayerSurface(engine: engine)
+                    .ignoresSafeArea()
+
+                // 2. 特效字幕 + 图形字幕 + 双语字幕渲染层
+                SubtitleOverlayView(
+                    engine: engine,
+                    clock: engine.clock,
+                    settings: settings
+                )
                 .ignoresSafeArea()
 
-            // 2. 特效字幕 + 图形字幕 + 双语字幕渲染层
-            SubtitleOverlayView(
-                engine: controller.engine,
-                clock: controller.engine.clock,
-                settings: settings
-            )
-            .ignoresSafeArea()
-
-            // 3. Siri Remote 遥控器底层长按/短按捕获层。
-            //    控制面板打开时让位给面板按钮；错误浮层出现时也移除，
-            //    否则这层会在 pressesBegan 里吞掉方向键，用户无法在「重试/软解/返回」间移动焦点。
-            if !showControlPanel && controller.activeErrorMessage == nil {
-                RemotePressCaptureView(
-                    onLeftDown: {
-                        revealOverlayTemporarily(keepVisible: true)
-                        controller.scrubEngine.beginPress(direction: .rewind)
-                    },
-                    onLeftUp: {
-                        controller.scrubEngine.endPress()
-                        revealOverlayTemporarily(keepVisible: false)
-                    },
-                    onRightDown: {
-                        revealOverlayTemporarily(keepVisible: true)
-                        controller.scrubEngine.beginPress(direction: .forward)
-                    },
-                    onRightUp: {
-                        controller.scrubEngine.endPress()
-                        revealOverlayTemporarily(keepVisible: false)
-                    },
-                    onPlayPause: {
-                        controller.togglePlayPause()
-                        revealOverlayTemporarily(keepVisible: false)
-                    },
-                    onSelect: {
-                        if !showOverlay {
+                // 3. Siri Remote 遥控器底层长按/短按/触控板微调捕获层。
+                //    控制面板打开时让位给面板按钮；错误浮层出现时也移除，
+                //    否则这层会在 pressesBegan 里吞掉方向键，用户无法在「重试/软解/返回」间移动焦点。
+                if !showControlPanel && controller.activeErrorMessage == nil {
+                    RemotePressCaptureView(
+                        onLeftDown: {
+                            revealOverlayTemporarily(keepVisible: true)
+                            controller.scrubEngine.beginPress(direction: .rewind)
+                        },
+                        onLeftUp: {
+                            controller.scrubEngine.endPress()
                             revealOverlayTemporarily(keepVisible: false)
-                        } else {
+                        },
+                        onRightDown: {
+                            revealOverlayTemporarily(keepVisible: true)
+                            controller.scrubEngine.beginPress(direction: .forward)
+                        },
+                        onRightUp: {
+                            controller.scrubEngine.endPress()
+                            revealOverlayTemporarily(keepVisible: false)
+                        },
+                        onPlayPause: {
                             controller.togglePlayPause()
                             revealOverlayTemporarily(keepVisible: false)
-                        }
-                    },
-                    onDown: {
-                        AppleTVSoundEffects.playSelect()
-                        hideOverlayTask?.cancel()
-                        showOverlay = false
-                        showControlPanel = true
-                    },
-                    onUp: {
-                        AppleTVSoundEffects.playFocusTick()
-                        settings.showStatsHUD.toggle()
-                    },
-                    onMenu: {
-                        if showOverlay && !controller.scrubEngine.isScrubbing {
+                        },
+                        onSelect: {
+                            if !showOverlay {
+                                revealOverlayTemporarily(keepVisible: false)
+                            } else {
+                                controller.togglePlayPause()
+                                revealOverlayTemporarily(keepVisible: false)
+                            }
+                        },
+                        onDown: {
+                            AppleTVSoundEffects.playSelect()
+                            hideOverlayTask?.cancel()
                             showOverlay = false
-                        } else {
-                            controller.stopAndDismiss()
-                            dismiss()
+                            showControlPanel = true
+                        },
+                        onUp: {
+                            AppleTVSoundEffects.playFocusTick()
+                            settings.showStatsHUD.toggle()
+                        },
+                        onMenu: {
+                            if controller.scrubEngine.isFineScrubbing {
+                                controller.scrubEngine.cancelFineScrub()
+                                revealOverlayTemporarily(keepVisible: false)
+                            } else if showOverlay && !controller.scrubEngine.isScrubbing {
+                                showOverlay = false
+                            } else {
+                                controller.stopAndDismiss()
+                                dismiss()
+                            }
+                        },
+                        onPanBegan: {
+                            let started = controller.scrubEngine.beginFineScrub()
+                            if started {
+                                revealOverlayTemporarily(keepVisible: true)
+                            }
+                            return started
+                        },
+                        onPanChanged: { deltaSeconds in
+                            controller.scrubEngine.updateFineScrub(deltaSeconds: deltaSeconds)
+                        },
+                        onPanEnded: {
+                            controller.scrubEngine.commitFineScrub()
+                            revealOverlayTemporarily(keepVisible: false)
+                        },
+                        onPanCancelled: {
+                            controller.scrubEngine.cancelFineScrub()
+                            revealOverlayTemporarily(keepVisible: false)
                         }
-                    }
-                )
-                .ignoresSafeArea()
-            }
+                    )
+                    .ignoresSafeArea()
+                }
 
-            // 4. 1Hz 实时媒体信息 HUD（按上键或在设置中开启）
-            if settings.showStatsHUD {
-                VStack {
-                    HStack {
-                        LiveStatsHUDView(
-                            engine: controller.engine,
-                            diagnostics: controller.engine.diagnostics
-                        )
+                // 4. 1Hz 实时媒体信息 HUD（按上键或在设置中开启）
+                if settings.showStatsHUD {
+                    VStack {
+                        HStack {
+                            LiveStatsHUDView(
+                                engine: engine,
+                                diagnostics: engine.diagnostics
+                            )
+                            Spacer()
+                        }
                         Spacer()
                     }
-                    Spacer()
+                    .padding(.top, 36)
+                    .padding(.leading, 48)
+                    .allowsHitTesting(false)
                 }
-                .padding(.top, 36)
-                .padding(.leading, 48)
-                .allowsHitTesting(false)
-            }
 
-            // 5. 贴底苹果原生风格进度条浮层
-            if (showOverlay || controller.scrubEngine.isScrubbing) && !showControlPanel {
-                BottomAppleProgressBar(
-                    engine: controller.engine,
-                    clock: controller.engine.clock,
-                    scrubEngine: controller.scrubEngine,
-                    title: controller.currentItem?.title ?? item.title,
-                    subtitle: controller.currentItem?.subtitle,
-                    onOpenSettings: {
-                        showOverlay = false
-                        showControlPanel = true
-                    },
-                    onSkipIntro: { controller.skipIntro() },
-                    onNextEpisode: controller.hasNextEpisode ? { controller.playNextEpisode() } : nil
-                )
-                .transition(.opacity)
-            }
+                // 5. 贴底苹果原生风格进度条浮层
+                if (showOverlay || controller.scrubEngine.isScrubbing) && !showControlPanel {
+                    BottomAppleProgressBar(
+                        engine: engine,
+                        clock: engine.clock,
+                        scrubEngine: controller.scrubEngine,
+                        title: controller.currentItem?.title ?? item.title,
+                        subtitle: controller.currentItem?.subtitle,
+                        onOpenSettings: {
+                            showOverlay = false
+                            showControlPanel = true
+                        },
+                        onSkipIntro: { controller.skipIntro() },
+                        onNextEpisode: controller.hasNextEpisode ? { controller.playNextEpisode() } : nil
+                    )
+                    .transition(.opacity)
+                }
 
-            // 6. 苹果原生毛玻璃设置面板
-            if showControlPanel {
-                PlayerControlPanels(
-                    controller: controller,
-                    engine: controller.engine,
-                    settings: settings,
-                    onDismiss: {
+                // 6. 苹果原生毛玻璃设置面板
+                if showControlPanel {
+                    PlayerControlPanels(
+                        controller: controller,
+                        engine: engine,
+                        settings: settings,
+                        onDismiss: {
+                            showControlPanel = false
+                            revealOverlayTemporarily(keepVisible: false)
+                        }
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .onExitCommand {
                         showControlPanel = false
                         revealOverlayTemporarily(keepVisible: false)
                     }
-                )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .onExitCommand {
-                    showControlPanel = false
-                    revealOverlayTemporarily(keepVisible: false)
                 }
             }
 
@@ -161,20 +185,22 @@ struct PlayerScreenView: View {
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 720)
                     HStack(spacing: 20) {
-                        Button("重试") {
-                            Task {
-                                await controller.load(item: item, playlist: playlist, sourceConfig: sourceConfig)
+                        if controller.engine != nil {
+                            Button("重试") {
+                                Task {
+                                    await controller.load(item: item, playlist: playlist, sourceConfig: sourceConfig)
+                                }
                             }
-                        }
-                        .buttonStyle(.borderedProminent)
+                            .buttonStyle(.borderedProminent)
 
-                        Button("切软解重试") {
-                            settings.decodePreference = .software
-                            Task {
-                                await controller.load(item: item, playlist: playlist, sourceConfig: sourceConfig)
+                            Button("切软解重试") {
+                                settings.decodePreference = .software
+                                Task {
+                                    await controller.load(item: item, playlist: playlist, sourceConfig: sourceConfig)
+                                }
                             }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
 
                         Button("返回") {
                             controller.stopAndDismiss()
@@ -189,6 +215,12 @@ struct PlayerScreenView: View {
         }
         .task {
             await controller.load(item: item, playlist: playlist, sourceConfig: sourceConfig)
+            revealOverlayTemporarily(keepVisible: false)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            controller.handleScenePhaseChange(newPhase)
+        }
+        .onChange(of: controller.routeRemovalEventCount) { _, _ in
             revealOverlayTemporarily(keepVisible: false)
         }
         .onDisappear {
@@ -206,7 +238,7 @@ struct PlayerScreenView: View {
         hideOverlayTask = Task {
             try? await Task.sleep(nanoseconds: 4_500_000_000)
             guard !Task.isCancelled else { return }
-            if !controller.scrubEngine.isScrubbing && !showControlPanel && controller.engine.state == .playing {
+            if !controller.scrubEngine.isScrubbing && !showControlPanel && controller.engine?.state == .playing {
                 withAnimation(.easeInOut(duration: 0.35)) {
                     showOverlay = false
                 }
@@ -253,7 +285,7 @@ private struct LiveStatsHUDView: View {
     }
 }
 
-// MARK: - Siri Remote 底层按键长按/短按精确捕获器
+// MARK: - Siri Remote 底层按键长按/短按 & 触控板微调捕获器
 
 private struct RemotePressCaptureView: UIViewControllerRepresentable {
     let onLeftDown: () -> Void
@@ -265,6 +297,10 @@ private struct RemotePressCaptureView: UIViewControllerRepresentable {
     let onDown: () -> Void
     let onUp: () -> Void
     let onMenu: () -> Void
+    let onPanBegan: () -> Bool
+    let onPanChanged: (Double) -> Void
+    let onPanEnded: () -> Void
+    let onPanCancelled: () -> Void
 
     func makeUIViewController(context: Context) -> RemotePressViewController {
         let vc = RemotePressViewController()
@@ -286,6 +322,10 @@ private struct RemotePressCaptureView: UIViewControllerRepresentable {
         vc.onDown = onDown
         vc.onUp = onUp
         vc.onMenu = onMenu
+        vc.onPanBegan = onPanBegan
+        vc.onPanChanged = onPanChanged
+        vc.onPanEnded = onPanEnded
+        vc.onPanCancelled = onPanCancelled
     }
 }
 
@@ -305,9 +345,26 @@ private final class RemotePressViewController: UIViewController {
     var onDown: (() -> Void)?
     var onUp: (() -> Void)?
     var onMenu: (() -> Void)?
+    var onPanBegan: (() -> Bool)?
+    var onPanChanged: ((Double) -> Void)?
+    var onPanEnded: (() -> Void)?
+    var onPanCancelled: (() -> Void)?
+
+    private var lastPanX: CGFloat = 0
+    private var isPanFineScrubbing = false
 
     override func loadView() {
         view = RemotePressView()
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
+        pan.cancelsTouchesInView = false
+        pan.delaysTouchesBegan = false
+        pan.delaysTouchesEnded = false
+        view.addGestureRecognizer(pan)
     }
 
     /// 存在期间优先把焦点交给捕获层，避免焦点悬空导致方向键失灵
@@ -319,6 +376,34 @@ private final class RemotePressViewController: UIViewController {
         super.viewDidAppear(animated)
         setNeedsFocusUpdate()
         updateFocusIfNeeded()
+    }
+
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        let translationX = gesture.translation(in: view).x
+        switch gesture.state {
+        case .began:
+            lastPanX = translationX
+            isPanFineScrubbing = onPanBegan?() ?? false
+        case .changed:
+            guard isPanFineScrubbing else { return }
+            let dx = translationX - lastPanX
+            lastPanX = translationX
+            // Siri Remote 触控板轻滑：14pt 约对应 1 秒微调，实现 1~2 秒级精准定位
+            let deltaSeconds = Double(dx) / 14.0
+            onPanChanged?(deltaSeconds)
+        case .ended:
+            if isPanFineScrubbing {
+                isPanFineScrubbing = false
+                onPanEnded?()
+            }
+        case .cancelled, .failed:
+            if isPanFineScrubbing {
+                isPanFineScrubbing = false
+                onPanCancelled?()
+            }
+        default:
+            break
+        }
     }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {

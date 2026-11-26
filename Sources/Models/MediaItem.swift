@@ -7,6 +7,35 @@ struct ExternalSubtitleReference: Identifiable, Codable, Hashable, Sendable {
     let url: URL
     let formatHint: String?
     let httpHeaders: [String: String]
+    /// 若字幕来自 SMB 共享，记录共享内相对路径，起播时下载至临时目录挂载
+    let smbRelativePath: String?
+
+    init(
+        title: String,
+        language: String? = nil,
+        url: URL,
+        formatHint: String? = nil,
+        httpHeaders: [String: String] = [:],
+        smbRelativePath: String? = nil
+    ) {
+        self.title = title
+        self.language = language
+        self.url = url
+        self.formatHint = formatHint
+        self.httpHeaders = httpHeaders
+        self.smbRelativePath = smbRelativePath
+    }
+
+    func sanitizedForPersistence() -> ExternalSubtitleReference {
+        ExternalSubtitleReference(
+            title: title,
+            language: language,
+            url: NetworkPitfallGuards.stripSensitiveQueryItems(from: url) ?? url,
+            formatHint: formatHint,
+            httpHeaders: NetworkPitfallGuards.stripSensitiveHeaders(httpHeaders),
+            smbRelativePath: smbRelativePath
+        )
+    }
 }
 
 struct MediaItem: Identifiable, Codable, Hashable, Sendable {
@@ -27,6 +56,8 @@ struct MediaItem: Identifiable, Codable, Hashable, Sendable {
     let serverItemId: String?
     /// 若来自 SMB，记录共享内相对路径，便于 AetherEngineSMB 构造读取器
     let smbRelativePath: String?
+    /// 媒体服务器记录的远端续播秒数（用于跨设备续播）
+    let serverResumeSeconds: Double?
 
     init(
         id: String,
@@ -43,7 +74,8 @@ struct MediaItem: Identifiable, Codable, Hashable, Sendable {
         httpHeaders: [String: String] = [:],
         externalSubtitles: [ExternalSubtitleReference] = [],
         serverItemId: String? = nil,
-        smbRelativePath: String? = nil
+        smbRelativePath: String? = nil,
+        serverResumeSeconds: Double? = nil
     ) {
         self.id = id
         self.title = title
@@ -60,6 +92,29 @@ struct MediaItem: Identifiable, Codable, Hashable, Sendable {
         self.externalSubtitles = externalSubtitles
         self.serverItemId = serverItemId
         self.smbRelativePath = smbRelativePath
+        self.serverResumeSeconds = serverResumeSeconds
+    }
+
+    /// 剥离所有敏感请求头与 URL 查询参数中的鉴权 Token（供观看记录/收藏落盘使用）
+    func sanitizedForPersistence() -> MediaItem {
+        MediaItem(
+            id: id,
+            title: title,
+            subtitle: subtitle,
+            isDirectory: isDirectory,
+            streamURL: NetworkPitfallGuards.stripSensitiveQueryItems(from: streamURL),
+            posterURL: NetworkPitfallGuards.stripSensitiveQueryItems(from: posterURL),
+            fileSize: fileSize,
+            durationSeconds: durationSeconds,
+            sourceId: sourceId,
+            protocolType: protocolType,
+            remotePath: remotePath,
+            httpHeaders: NetworkPitfallGuards.stripSensitiveHeaders(httpHeaders),
+            externalSubtitles: externalSubtitles.map { $0.sanitizedForPersistence() },
+            serverItemId: serverItemId,
+            smbRelativePath: smbRelativePath,
+            serverResumeSeconds: serverResumeSeconds
+        )
     }
 
     var formattedFileSize: String? {

@@ -21,7 +21,7 @@ enum SMBClientError: LocalizedError {
 }
 
 /// SMB 媒体源客户端：
-/// - 目录浏览：直接使用 AetherEngineSMB 底层的 SMBClient（AetherEngineSMB 自身只提供单文件字节读取，没有目录列举 API）
+/// - 目录浏览与外挂字幕拉取：直接使用 AetherEngineSMB 底层的 SMBClient（AetherEngineSMB 自身只提供单文件字节读取，没有目录列举 API）
 /// - 播放：由 PlaybackController 经 AetherEngineSMB 的 SMBIOReader 接入引擎，这里只负责生成不含凭据的 smb:// 地址
 ///
 /// 避坑：
@@ -35,6 +35,13 @@ final class SMBSourceClient: Sendable {
         let share: String
         let username: String
         let password: String
+    }
+
+    /// 匹配同目录外挂字幕，同时严格保留服务器返回的原始字幕文件名字节（不做 NFC/NFD 改写）
+    static func matchSubtitles(videoName: String, subtitleFiles: [String]) -> [String] {
+        subtitleFiles.filter { subName in
+            NetworkPitfallGuards.subtitleMatchesVideo(subtitleFilename: subName, videoFilename: videoName)
+        }
     }
 
     /// 生成不含凭据的 smb:// 地址（`relativePath` 为共享内相对路径）
@@ -60,7 +67,7 @@ final class SMBSourceClient: Sendable {
         return url
     }
 
-    /// 列出共享内某个目录（`path` 为以 "/" 开头的共享内相对路径，"/" 即共享根目录）下的子目录与视频文件。
+    /// 列出共享内某个目录（`path` 为以 "/" 开头的共享内相对路径，"/" 即共享根目录）下的子目录与视频文件（含同目录外挂字幕匹配）。
     /// 目录在前、视频在后，各自按自然顺序排列。
     func listDirectory(source: MediaSourceConfig, path: String) async throws -> [MediaItem] {
         let directoryPath = path
@@ -81,28 +88,120 @@ final class SMBSourceClient: Sendable {
         let videos = visible
             .filter { !$0.isDirectory && MediaItem.isVideoFile($0.name) }
             .sorted(by: byName)
+        let subtitleFiles = visible
+            .filter { !$0.isDirectory && MediaItem.isSubtitleFile($0.name) }
+            .sorted(by: byName)
+        let subtitleNames = subtitleFiles.map(\.name)
 
         let parent = directoryPath.isEmpty ? "" : directoryPath + "/"
         var items: [MediaItem] = []
-        for file in directories + videos {
+
+        for file in directories {
             let relativePath = parent + file.name
-            guard let url = try? buildSMBURL(source: source, relativePath: relativePath) else {
-                continue
-            }
             items.append(MediaItem(
                 id: "smb:\(source.id.uuidString):/\(relativePath)",
                 title: file.name,
-                subtitle: file.isDirectory ? "文件夹" : nil,
-                isDirectory: file.isDirectory,
-                streamURL: file.isDirectory ? nil : url,
-                fileSize: file.isDirectory ? nil : Int64(clamping: file.size),
+                subtitle: "文件夹",
+                isDirectory: true,
+                streamURL: nil,
+                fileSize: nil,
                 sourceId: source.id,
                 protocolType: .smb,
                 remotePath: "/" + relativePath,
                 smbRelativePath: relativePath
             ))
         }
+
+        for file in videos {
+            let relativePath = parent + file.name
+            guard let url = try? buildSMBURL(source: source, relativePath: relativePath) else {
+                continue
+            }
+
+            let matchedNames = Self.matchSubtitles(videoName: file.name, subtitleFiles: subtitleNames)
+            let matchedSubs: [ExternalSubtitleReference] = matchedNames.compactMap { subName in
+                let subRelPath = parent + subName
+                guard let subURL = try? buildSMBURL(source: source, relativePath: subRelPath) else {
+                    return nil
+                }
+                let ext = (subName as NSString).pathExtension.lowercased()
+                return ExternalSubtitleReference(
+                    title: subName,
+                    language: NetworkPitfallGuards.inferSubtitleLanguageCode(from: subName),
+                    url: subURL,
+                    formatHint: ext,
+                    smbRelativePath: subRelPath
+                )
+            }
+
+            items.append(MediaItem(
+                id: "smb:\(source.id.uuidString):/\(relativePath)",
+                title: file.name,
+                subtitle: matchedSubs.isEmpty ? nil : "含 \(matchedSubs.count) 条同目录外挂字幕",
+                isDirectory: false,
+                streamURL: url,
+                fileSize: Int64(clamping: file.size),
+                sourceId: source.id,
+                protocolType: .smb,
+                remotePath: "/" + relativePath,
+                externalSubtitles: matchedSubs,
+                smbRelativePath: relativePath
+            ))
+        }
         return items
+    }
+
+    /// 播放前将匹配到的 SMB 同目录外挂字幕通过单个共享会话下载到临时目录，转换为本地 `file://` URL 供引擎挂载
+    func downloadSubtitles(
+        source: MediaSourceConfig,
+        subtitles: [ExternalSubtitleReference],
+        destinationDirectory: URL
+    ) async throws -> [ExternalSubtitleReference] {
+        guard !subtitles.isEmpty else { return [] }
+        let target = try endpoint(for: source)
+        let maxSubtitleBytes = 50 * 1024 * 1024
+
+        let pairs: [(ExternalSubtitleReference, String)] = subtitles.compactMap { sub in
+            if let rel = sub.smbRelativePath, !rel.isEmpty {
+                return (sub, rel)
+            }
+            if sub.url.scheme?.lowercased() == "smb" {
+                let rawPath = sub.url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                let sharePrefix = target.share + "/"
+                if rawPath.hasPrefix(sharePrefix) {
+                    return (sub, String(rawPath.dropFirst(sharePrefix.count)))
+                }
+            }
+            return nil
+        }
+
+        guard !pairs.isEmpty else { return [] }
+        try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+
+        return try await withSession(for: source) { client in
+            var localRefs: [ExternalSubtitleReference] = []
+            for (index, pair) in pairs.enumerated() {
+                let (sub, relPath) = pair
+                guard let data = try? await client.download(path: relPath),
+                      !data.isEmpty,
+                      data.count <= maxSubtitleBytes else {
+                    continue
+                }
+                let rawName = (sub.title as NSString).lastPathComponent
+                let safeName = rawName.isEmpty ? "subtitle_\(index).srt" : rawName
+                let localURL = destinationDirectory.appendingPathComponent("\(index)_\(safeName)")
+                try data.write(to: localURL, options: .atomic)
+                localRefs.append(ExternalSubtitleReference(
+                    title: sub.title,
+                    language: sub.language,
+                    url: localURL,
+                    formatHint: sub.formatHint,
+                    httpHeaders: [:],
+                    smbRelativePath: sub.smbRelativePath
+                ))
+            }
+            return localRefs
+        }
     }
 
     // MARK: - Private
@@ -113,10 +212,7 @@ final class SMBSourceClient: Sendable {
             throw SMBClientError.missingShareName
         }
 
-        let cleanHost = source.host
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "smb://", with: "")
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let cleanHost = source.cleanedHost
         guard !cleanHost.isEmpty else {
             throw SMBClientError.invalidURL
         }

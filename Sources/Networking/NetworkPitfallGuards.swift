@@ -3,6 +3,20 @@ import AetherEngine
 
 /// 局域网 SMB / WebDAV / 媒体服常见网络坑位防护工具集
 enum NetworkPitfallGuards {
+    private static let selfSignedLANSession: URLSession = buildResilientSession(allowSelfSignedLAN: true)
+    private static let strictTLSSession: URLSession = buildResilientSession(allowSelfSignedLAN: false)
+
+    private static let deviceIdStorageKey = "AetherTV.DeviceId.v1"
+
+    /// 敏感鉴权请求头（小写键名，用于落盘脱敏）
+    static let sensitiveHeaderKeys: Set<String> = [
+        "authorization",
+        "x-emby-token",
+        "x-emby-authorization",
+        "x-plex-token",
+        "cookie"
+    ]
+
     /// 统一配置 AetherEngine 的自签名证书信任策略
     static func configureEngineTLS(allowSelfSignedLAN: Bool) {
         if allowSelfSignedLAN {
@@ -65,7 +79,26 @@ enum NetworkPitfallGuards {
         return "Basic \(data.base64EncodedString())"
     }
 
-    /// 构造带避坑默认项的请求头（UA、Basic Auth、Keep-Alive）
+    /// 稳定的设备标识（用于 Emby / Jellyfin / Plex 客户端认证头）
+    static var clientDeviceId: String {
+        if let existing = UserDefaults.standard.string(forKey: deviceIdStorageKey), !existing.isEmpty {
+            return existing
+        }
+        let generated = UUID().uuidString
+        UserDefaults.standard.set(generated, forKey: deviceIdStorageKey)
+        return generated
+    }
+
+    /// 构造 Emby / Jellyfin 规范的 MediaBrowser 授权头
+    static func embyAuthorizationHeader(token: String? = nil) -> String {
+        var header = "MediaBrowser Client=\"AetherTV\", Device=\"Apple TV\", DeviceId=\"\(clientDeviceId)\", Version=\"1.0.0\""
+        if let token, !token.isEmpty {
+            header += ", Token=\"\(token)\""
+        }
+        return header
+    }
+
+    /// 构造带避坑默认项的请求头（UA、Basic Auth、Emby/Jellyfin/Plex Token）
     static func standardHTTPHeaders(for source: MediaSourceConfig) -> [String: String] {
         var headers: [String: String] = [
             "User-Agent": source.customUserAgent.isEmpty ? "AetherTV/1.0" : source.customUserAgent,
@@ -74,17 +107,75 @@ enum NetworkPitfallGuards {
         if let auth = basicAuthHeader(username: source.username, password: source.password) {
             headers["Authorization"] = auth
         }
-        if !source.apiToken.isEmpty {
-            switch source.protocolType {
-            case .emby, .jellyfin:
+        switch source.protocolType {
+        case .emby, .jellyfin:
+            headers["X-Emby-Authorization"] = embyAuthorizationHeader(token: source.apiToken.isEmpty ? nil : source.apiToken)
+            if !source.apiToken.isEmpty {
                 headers["X-Emby-Token"] = source.apiToken
-            case .plex:
-                headers["X-Plex-Token"] = source.apiToken
-            default:
-                break
             }
+        case .plex:
+            headers["X-Plex-Client-Identifier"] = clientDeviceId
+            headers["X-Plex-Product"] = "AetherTV"
+            headers["X-Plex-Device"] = "Apple TV"
+            headers["X-Plex-Platform"] = "tvOS"
+            if !source.apiToken.isEmpty {
+                headers["X-Plex-Token"] = source.apiToken
+            }
+        default:
+            break
         }
         return headers
+    }
+
+    /// 剥离请求头中的敏感鉴权字段（供 WatchHistoryStore 持久化前调用）
+    static func stripSensitiveHeaders(_ headers: [String: String]) -> [String: String] {
+        headers.filter { !sensitiveHeaderKeys.contains($0.key.lowercased()) }
+    }
+
+    /// 剥离 URL 查询参数中的 `api_key` 与 `X-Plex-Token`
+    static func stripSensitiveQueryItems(from url: URL?) -> URL? {
+        guard let url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        guard let items = components.queryItems, !items.isEmpty else {
+            return url
+        }
+        let filtered = items.filter { item in
+            let lower = item.name.lowercased()
+            return lower != "api_key" && lower != "x-plex-token"
+        }
+        components.queryItems = filtered.isEmpty ? nil : filtered
+        return components.url ?? url
+    }
+
+    /// 同目录外挂字幕匹配：匹配与视频主文件名一致，或主文件名后紧跟分隔符的字幕（防止 `Ep1.mkv` 误匹配 `Ep10.srt`）
+    static func subtitleMatchesVideo(subtitleFilename: String, videoFilename: String) -> Bool {
+        let videoStem = (videoFilename as NSString).deletingPathExtension
+            .precomposedStringWithCanonicalMapping
+            .lowercased()
+        let subBase = (subtitleFilename as NSString).deletingPathExtension
+            .precomposedStringWithCanonicalMapping
+            .lowercased()
+        guard !videoStem.isEmpty, subBase.hasPrefix(videoStem) else { return false }
+        if subBase == videoStem { return true }
+        let nextIndex = subBase.index(subBase.startIndex, offsetBy: videoStem.count)
+        let boundaryChars: Set<Character> = [".", "_", "-", " ", "[", "(", "]", ")"]
+        return boundaryChars.contains(subBase[nextIndex])
+    }
+
+    /// 从外挂字幕文件名推断 BCP-47 语言代码
+    static func inferSubtitleLanguageCode(from filename: String) -> String? {
+        let lower = filename.lowercased()
+        if lower.contains("chs") || lower.contains(".sc.") || lower.contains("_sc") || lower.contains("zh-cn") || lower.contains("简") {
+            return "zh-Hans"
+        }
+        if lower.contains("cht") || lower.contains(".tc.") || lower.contains("_tc") || lower.contains("zh-tw") || lower.contains("繁") {
+            return "zh-Hant"
+        }
+        if lower.contains(".zh.") || lower.contains(".chi.") { return "zh" }
+        if lower.contains(".en.") || lower.contains(".eng.") { return "en" }
+        if lower.contains(".ja.") || lower.contains(".jpn.") { return "ja" }
+        return nil
     }
 
     /// 安全解析 64 位大文件长度（避免 >4GB 4K Remux 溢出）
@@ -93,13 +184,23 @@ enum NetworkPitfallGuards {
         return Int64(raw.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    /// 创建支持局域网自签名证书且在同源重定向时保留 Authorization 的 URLSession
+    /// 获取全局复用的共享 URLSession（复用连接池与 HTTP Keep-Alive，避免每次请求泄漏 Session）
+    static func sharedSession(allowSelfSignedLAN: Bool = true) -> URLSession {
+        allowSelfSignedLAN ? selfSignedLANSession : strictTLSSession
+    }
+
+    /// 兼容旧调用点：直接返回全局复用共享 Session
     static func makeResilientSession(
         allowSelfSignedLAN: Bool = true,
         timeoutInterval: TimeInterval = 20
     ) -> URLSession {
+        _ = timeoutInterval
+        return sharedSession(allowSelfSignedLAN: allowSelfSignedLAN)
+    }
+
+    private static func buildResilientSession(allowSelfSignedLAN: Bool) -> URLSession {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = timeoutInterval
+        config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 60
         config.httpMaximumConnectionsPerHost = 6
         config.waitsForConnectivity = false
@@ -131,7 +232,7 @@ private final class ResilientNetworkDelegate: NSObject, URLSessionDelegate, URLS
         completionHandler(.performDefaultHandling, nil)
     }
 
-    /// 解决 iOS/tvOS URLSession 在 301/302/307/308 重定向时默认丢弃 Authorization Header 的经典坑
+    /// 解决 iOS/tvOS URLSession 在 301/302/307/308 同源重定向时默认丢弃鉴权头的经典坑
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
@@ -141,22 +242,31 @@ private final class ResilientNetworkDelegate: NSObject, URLSessionDelegate, URLS
     ) {
         var mutable = request
         if let original = task.originalRequest,
-           let origHost = original.url?.host?.lowercased(),
-           let newHost = request.url?.host?.lowercased(),
-           origHost == newHost {
-            if let auth = original.value(forHTTPHeaderField: "Authorization"),
-               mutable.value(forHTTPHeaderField: "Authorization") == nil {
-                mutable.setValue(auth, forHTTPHeaderField: "Authorization")
-            }
-            if let embyToken = original.value(forHTTPHeaderField: "X-Emby-Token"),
-               mutable.value(forHTTPHeaderField: "X-Emby-Token") == nil {
-                mutable.setValue(embyToken, forHTTPHeaderField: "X-Emby-Token")
-            }
-            if let plexToken = original.value(forHTTPHeaderField: "X-Plex-Token"),
-               mutable.value(forHTTPHeaderField: "X-Plex-Token") == nil {
-                mutable.setValue(plexToken, forHTTPHeaderField: "X-Plex-Token")
+           let origURL = original.url,
+           let newURL = request.url,
+           let origHost = origURL.host?.lowercased(),
+           let newHost = newURL.host?.lowercased(),
+           origHost == newHost,
+           effectivePort(for: origURL) == effectivePort(for: newURL),
+           let origScheme = origURL.scheme?.lowercased(),
+           let newScheme = newURL.scheme?.lowercased(),
+           (origScheme == newScheme || newScheme == "https") {
+            for headerName in ["Authorization", "X-Emby-Token", "X-Emby-Authorization", "X-Plex-Token"] {
+                if let val = original.value(forHTTPHeaderField: headerName),
+                   mutable.value(forHTTPHeaderField: headerName) == nil {
+                    mutable.setValue(val, forHTTPHeaderField: headerName)
+                }
             }
         }
         completionHandler(mutable)
+    }
+
+    private func effectivePort(for url: URL) -> Int? {
+        if let port = url.port { return port }
+        switch url.scheme?.lowercased() {
+        case "https": return 443
+        case "http": return 80
+        default: return nil
+        }
     }
 }
