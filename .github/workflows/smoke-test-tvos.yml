@@ -101,9 +101,9 @@ jobs:
           fi
 
           "$PY" Tests/SmokeTest/servers/webdav_server.py 127.0.0.1 "$WEBDAV_PORT" \
-            "$RUNNER_TEMP/fixtures/webdav" smoke smoke-pass > artifacts/webdav-server.log 2>&1 &
+            "$RUNNER_TEMP/fixtures" smoke smoke-pass > artifacts/webdav-server.log 2>&1 &
           python3 Tests/SmokeTest/servers/webdav_server.py 127.0.0.1 "$HLS_PORT" \
-            "$RUNNER_TEMP/fixtures/hls" "" "" > artifacts/hls-server.log 2>&1 &
+            "$RUNNER_TEMP/fixtures" "" "" > artifacts/hls-server.log 2>&1 &
           if [ "$SMB_PORT" != "0" ]; then
             "$PY" Tests/SmokeTest/servers/smb_server.py 127.0.0.1 "$SMB_PORT" MEDIA \
               "$RUNNER_TEMP/fixtures/smb" smoke smoke-pass > artifacts/smb-server.log 2>&1 &
