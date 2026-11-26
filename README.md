@@ -5,6 +5,20 @@
 [![Build AetherTV Unsigned IPA](https://github.com/luochaojie1984/AetherTV-tvOS/actions/workflows/build-tvos-ipa.yml/badge.svg)](https://github.com/luochaojie1984/AetherTV-tvOS/actions/workflows/build-tvos-ipa.yml)
 [![Smoke Test (tvOS Simulator)](https://github.com/luochaojie1984/AetherTV-tvOS/actions/workflows/smoke-test-tvos.yml/badge.svg)](https://github.com/luochaojie1984/AetherTV-tvOS/actions/workflows/smoke-test-tvos.yml)
 
+## 界面预览
+
+以下截图来自本仓库 **Smoke Test (tvOS Simulator)** 工作流的真实运行（Apple TV 模拟器，播放的是测试片，画面里的时间码是烧录进视频的）：
+
+| 首页 | 设置 |
+| :---: | :---: |
+| <img src="docs/screenshots/home.jpg" width="480"> | <img src="docs/screenshots/settings.jpg" width="480"> |
+
+| 播放 + 同目录外挂字幕（ASS 样式保留） | 长按快进 + 实时预览 |
+| :---: | :---: |
+| <img src="docs/screenshots/playback-subtitles.jpg" width="480"> | <img src="docs/screenshots/scrub-preview.jpg" width="480"> |
+
+（图片以 HTML 标签限宽显示；直接点开可看 1920×1080 原图。）
+
 ## 核心特性
 
 - **苹果原生视觉与交互体验**：复用 tvOS 原生焦点引擎（Focus Engine）、毛玻璃视觉层级与系统交互音效。
