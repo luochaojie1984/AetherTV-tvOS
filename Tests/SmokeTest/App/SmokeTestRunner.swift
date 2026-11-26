@@ -46,12 +46,9 @@ enum SmokeTestRunner {
 
     static var report = Report()
 
-    // MARK: - 入口（由 +load 调用）
+    // MARK: - 入口
 
-    nonisolated static func install() {
-        SmokeTest.runner = run
-    }
-
+    /// 由 Sources/App/SmokeTest.swift 在 `#if SMOKE_TEST` 分支里调用
     static func run() async {
         let defaults = UserDefaults.standard
         let webdavPort = defaults.integer(forKey: "smokeWebdavPort")
@@ -346,13 +343,6 @@ enum SmokeTestRunner {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(report) else { return }
         try? data.write(to: resultURL, options: .atomic)
-    }
-}
-
-/// 镜像加载时把测试装进 SmokeTest 接入点（只在这个构建配置里存在）。
-final class SmokeTestBootstrap: NSObject {
-    override class func load() {
-        SmokeTestRunner.install()
     }
 }
 #endif
