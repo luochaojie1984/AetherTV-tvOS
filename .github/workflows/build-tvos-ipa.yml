@@ -1,0 +1,183 @@
+name: Build AetherTV Unsigned IPA (tvOS)
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "runner 标签：xcode-27 = Xcode 27（AetherEngine 官方支持）；macos-latest = Xcode 26.6（上游 best-effort 兼容）"
+        type: choice
+        options:
+          - xcode-27
+          - macos-latest
+        default: xcode-27
+      xcode_version:
+        description: "可选：指定 Xcode 路径（留空则沿用镜像默认 Xcode）"
+        required: false
+        default: ""
+      traits:
+        description: "AetherEngine 可选组件：none 全关（默认） / recommended 推荐四项 / all 再加双层合成"
+        type: choice
+        options:
+          - none
+          - recommended
+          - all
+        default: none
+
+# 同一分支上的新推送会取消还没跑完的旧构建
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-tvos-ipa:
+    # push / tag 触发时 inputs 为空，落到 xcode-27
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Cache SwiftPM clones and binary artifacts
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm/repositories
+            ~/Library/Caches/org.swift.swiftpm/artifacts
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml') }}
+          restore-keys: swiftpm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Apply optional AetherEngine traits
+        if: ${{ inputs.traits && inputs.traits != 'none' }}
+        env:
+          # AetherEngine 默认一个 trait 都不开（.default(enabledTraits: [])），所以这里要写全想要的项。
+          # recommended = 上游 installation.md 的示例集合；DualLayerDolbyVision 上游不建议对外分发。
+          TRAITS: ${{ inputs.traits == 'all' && 'TrueHDObjectAudio,DTSXObjectAudio,DolbyVisionFelCurves,DolbyVisionStillReshaping,DualLayerDolbyVision' || 'TrueHDObjectAudio,DTSXObjectAudio,DolbyVisionFelCurves,DolbyVisionStillReshaping' }}
+        run: |
+          # 把 traits 列表插到 project.yml 里 AetherEngine 的 url 行之后（与版本号无关，改版本不会让锚点失效）
+          awk -v traits="$TRAITS" '
+            { print }
+            /url: https:\/\/github\.com\/superuser404notfound\/AetherEngine$/ && traits != "" {
+              print "    traits:"
+              n = split(traits, list, ",")
+              for (i = 1; i <= n; i++) print "      - " list[i]
+            }
+          ' project.yml > project.yml.traits && mv project.yml.traits project.yml
+          sed -n '/^packages:/,/^targets:/p' project.yml
+
+      - name: Select Xcode
+        env:
+          XCODE_PATH: ${{ inputs.xcode_version }}
+        run: |
+          if [ -n "$XCODE_PATH" ]; then
+            sudo xcode-select -s "$XCODE_PATH"
+          else
+            # 镜像默认已经是 Xcode 27 时直接沿用，和 AetherEngine 上游 CI 用同一套工具链；
+            # 否则挑镜像里最新的一个（macos-latest 上是 Xcode 26.x，只在上游 best-effort 兼容范围内）。
+            major=$(xcodebuild -version | awk '/^Xcode / { print $2 }' | cut -d. -f1)
+            if [ -z "$major" ] || [ "$major" -lt 27 ]; then
+              latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)
+              if [ -n "$latest" ]; then
+                echo "Selecting $latest"
+                sudo xcode-select -s "$latest"
+              fi
+            fi
+          fi
+          xcodebuild -version
+          swift --version
+          major=$(xcodebuild -version | awk '/^Xcode / { print $2 }' | cut -d. -f1)
+          if [ -z "$major" ] || [ "$major" -lt 27 ]; then
+            echo "::warning::当前 Xcode 主版本是 ${major:-未知}，低于 AetherEngine 官方支持的 Xcode 27（Swift 6.4）。构建会按上游的 best-effort 兼容继续；如果失败，请把 runner 换成 xcode-27，或在 project.yml 里把 AetherEngine 固定到旧 tag。"
+          fi
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            # Package Traits 需要 XcodeGen 2.46.0 及以上，brew 当前的稳定版满足
+            if ! brew install xcodegen; then
+              echo "brew 安装失败，回退到 GitHub Release 的预编译包"
+              rm -rf /tmp/xcodegen /tmp/xcodegen.zip
+              curl -fL --retry 3 -o /tmp/xcodegen.zip \
+                "https://github.com/yonaskolb/XcodeGen/releases/download/2.49.0/xcodegen.zip"
+              unzip -q /tmp/xcodegen.zip -d /tmp
+              sudo PREFIX=/usr/local /tmp/xcodegen/install.sh
+            fi
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode Project
+        run: |
+          xcodegen generate
+          # xcodebuild -scheme 需要随工程生成的共享 scheme（project.yml 里的 scheme: {}）
+          if [ ! -f AetherTV.xcodeproj/xcshareddata/xcschemes/AetherTV.xcscheme ]; then
+            echo "::error::没有生成共享 scheme AetherTV.xcscheme，请检查 project.yml 的 targets.AetherTV.scheme"
+            exit 1
+          fi
+
+      - name: Verify traits were written into the project
+        if: ${{ inputs.traits && inputs.traits != 'none' }}
+        run: |
+          if ! grep -q "traits = (" AetherTV.xcodeproj/project.pbxproj; then
+            echo "::error::已请求开启可选组件，但生成的工程里没有 traits。XcodeGen 至少需要 2.46.0：$(xcodegen --version)"
+            exit 1
+          fi
+
+      - name: Resolve Swift Package Dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project AetherTV.xcodeproj \
+            -scheme AetherTV
+
+      - name: Build Unsigned tvOS App (Release)
+        run: |
+          mkdir -p build
+          set -o pipefail
+          xcodebuild clean build \
+            -project AetherTV.xcodeproj \
+            -scheme AetherTV \
+            -configuration Release \
+            -sdk appletvos \
+            -destination "generic/platform=tvOS" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            2>&1 | tee build/xcodebuild.log
+
+      - name: Package Unsigned IPA
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release-appletvos/AetherTV.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Error: AetherTV.app not found at $APP_PATH"
+            exit 1
+          fi
+          # 产物应保持无签名，交给路由器上的自签程序处理
+          if codesign -dv "$APP_PATH" 2>/dev/null; then
+            echo "::warning::$APP_PATH 带有签名，预期是无签名产物"
+          fi
+          ls -la "$APP_PATH"
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/
+          cd build/ipa
+          zip -qry ../AetherTV-tvOS-unsigned.ipa Payload
+          ls -lh ../AetherTV-tvOS-unsigned.ipa
+
+      - name: Upload Unsigned IPA Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: AetherTV-tvOS-unsigned-ipa
+          path: build/AetherTV-tvOS-unsigned.ipa
+          retention-days: 30
+
+      - name: Upload build log
+        if: ${{ failure() && hashFiles('build/xcodebuild.log') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: AetherTV-xcodebuild-log
+          path: build/xcodebuild.log
+          retention-days: 14
+          if-no-files-found: ignore

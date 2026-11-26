@@ -1,0 +1,14 @@
+# XcodeGen 生成的工程（CI 与本地都由 `xcodegen generate` 现场生成）
+*.xcodeproj/
+*.xcworkspace/
+
+# 构建产物
+build/
+DerivedData/
+
+# Xcode 个人状态
+xcuserdata/
+*.xcuserstate
+
+# macOS
+.DS_Store
