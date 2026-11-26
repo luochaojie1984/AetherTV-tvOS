@@ -65,6 +65,8 @@ jobs:
           test -f AetherTV.xcodeproj/xcshareddata/xcschemes/AetherTV.xcscheme
 
       - name: Build for the tvOS Simulator (SmokeTest configuration)
+        # ARCHS=arm64：generic 目的会同时构建 x86_64，而 LibDovi.xcframework 没有
+        # tvOS 模拟器的 x86_64 切片，x86_64 链接会因 _dovi_rpu_get_error 失败。
         run: |
           mkdir -p build
           set -o pipefail
@@ -75,6 +77,8 @@ jobs:
             -sdk appletvsimulator \
             -destination "generic/platform=tvOS Simulator" \
             -derivedDataPath build/Sim \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
