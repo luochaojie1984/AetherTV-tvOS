@@ -9,7 +9,15 @@ struct PlayerScreenView: View {
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var settings: PlayerSettingsStore
-    @StateObject private var controller = PlaybackController()
+    @StateObject private var controller: PlaybackController
+
+    /// `controller` 可注入，好让冒烟测试从外部观察同一个播放会话
+    init(item: MediaItem, playlist: [MediaItem], sourceConfig: MediaSourceConfig?, controller: PlaybackController? = nil) {
+        self.item = item
+        self.playlist = playlist
+        self.sourceConfig = sourceConfig
+        _controller = StateObject(wrappedValue: controller ?? PlaybackController())
+    }
 
     @State private var showOverlay = true
     @State private var showControlPanel = false

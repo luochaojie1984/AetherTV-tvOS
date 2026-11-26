@@ -20,6 +20,12 @@ struct AetherTVApp: App {
                 .environmentObject(sourceStore)
                 .environmentObject(historyStore)
                 .preferredColorScheme(.dark)
+                .task {
+                    // 冒烟测试构建里才有 runner；正常构建里什么也不会发生
+                    if SmokeTest.isRequested, let runner = SmokeTest.runner {
+                        await runner()
+                    }
+                }
         }
     }
 }

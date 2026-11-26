@@ -159,6 +159,17 @@ jobs:
           if codesign -dv "$APP_PATH" 2>/dev/null; then
             echo "::warning::$APP_PATH 带有签名，预期是无签名产物"
           fi
+          # 图标是否真的进了包：actool 会把它写进 Assets.car 与 Info.plist
+          if [ -f "$APP_PATH/Assets.car" ]; then
+            echo "Assets.car present"
+          else
+            echo "::warning::包里没有 Assets.car，图标可能没编进去"
+          fi
+          if plutil -extract CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconName raw "$APP_PATH/Info.plist" 2>/dev/null | grep -q "App Icon"; then
+            echo "app icon registered in Info.plist"
+          else
+            echo "::warning::Info.plist 里没有图标名，主屏图标可能不生效"
+          fi
           ls -la "$APP_PATH"
           mkdir -p build/ipa/Payload
           cp -R "$APP_PATH" build/ipa/Payload/

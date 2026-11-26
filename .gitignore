@@ -12,3 +12,6 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# xcodegen generate 会根据 project.yml 的 info.properties 重新生成本文件
+Sources/App/Info.plist

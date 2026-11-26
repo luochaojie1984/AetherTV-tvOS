@@ -6,6 +6,13 @@ options:
   xcodeVersion: "26.0"
   generateEmptyDirectories: true
 
+# SmokeTest 只用于 CI 冒烟测试（tvOS 模拟器），与 Debug 同为调试配置；
+# 它额外定义 SMOKE_TEST 编译条件，让 Tests/SmokeTest/App 里的测试代码编进来。
+configs:
+  Debug: debug
+  Release: release
+  SmokeTest: debug
+
 packages:
   AetherEngine:
     url: https://github.com/superuser404notfound/AetherEngine
@@ -36,9 +43,40 @@ targets:
       - path: Sources
         excludes:
           - "**/*.md"
+      # 冒烟测试代码：整份文件包在 #if SMOKE_TEST 里，只有 SmokeTest 配置会真正编入，
+      # Release 构建里不产生任何代码（见下方 settings.configs.SmokeTest）
+      - path: Tests/SmokeTest/App
     info:
       path: Sources/App/Info.plist
+      # 注意：XcodeGen 会用这里的 properties 重新生成该文件（仓库里不再保存副本）。
+      # 漏掉 NSLocalNetworkUsageDescription 的话，装到 Apple TV 上访问 NAS 会被系统拒绝。
+      properties:
+        CFBundleDisplayName: AetherTV
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UIUserInterfaceStyle: Dark
+        UIRequiredDeviceCapabilities:
+          - arm64
+        NSLocalNetworkUsageDescription: AetherTV 需要访问本地局域网以连接您的 SMB、WebDAV、Emby、Jellyfin、Plex 及 DLNA 媒体服务器。
+        NSBonjourServices:
+          - _smb._tcp
+          - _webdav._tcp
+          - _webdavs._tcp
+          - _http._tcp
+          - _https._tcp
+          - _emby._tcp
+          - _jellyfin._tcp
+          - _plexmediasvr._tcp
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+        UIBackgroundModes:
+          - audio
     settings:
+      configs:
+        SmokeTest:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SMOKE_TEST"
       base:
         PRODUCT_NAME: AetherTV
         PRODUCT_BUNDLE_IDENTIFIER: com.aethertv.player

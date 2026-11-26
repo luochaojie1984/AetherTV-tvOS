@@ -1,0 +1,204 @@
+name: Smoke Test (tvOS Simulator)
+
+# 在 GitHub 的 Xcode 27 镜像里启动 Apple TV 模拟器，装上 SmokeTest 配置的 App，
+# 用 --smoke-test 让它自查：WebDAV / SMB 目录浏览、MKV / MP4 / HLS 播放、外挂字幕、
+# 跳转与长按预览，并把每一步结果与截图作为产物上传。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - "Sources/**"
+      - "Tests/SmokeTest/**"
+      - "project.yml"
+      - ".github/workflows/smoke-test-tvos.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  WEBDAV_PORT: "8080"
+  HLS_PORT: "8081"
+  SMB_PORT: "1445"
+
+jobs:
+  smoke-test:
+    runs-on: xcode-27
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Cache SwiftPM clones and binary artifacts
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm/repositories
+            ~/Library/Caches/org.swift.swiftpm/artifacts
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml') }}
+          restore-keys: swiftpm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            if ! brew install xcodegen; then
+              rm -rf /tmp/xcodegen /tmp/xcodegen.zip
+              curl -fL --retry 3 -o /tmp/xcodegen.zip \
+                "https://github.com/yonaskolb/XcodeGen/releases/download/2.49.0/xcodegen.zip"
+              unzip -q /tmp/xcodegen.zip -d /tmp
+              sudo PREFIX=/usr/local /tmp/xcodegen/install.sh
+            fi
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode Project
+        run: |
+          xcodegen generate
+          test -f AetherTV.xcodeproj/xcshareddata/xcschemes/AetherTV.xcscheme
+
+      - name: Build for the tvOS Simulator (SmokeTest configuration)
+        run: |
+          mkdir -p build
+          set -o pipefail
+          xcodebuild build \
+            -project AetherTV.xcodeproj \
+            -scheme AetherTV \
+            -configuration SmokeTest \
+            -sdk appletvsimulator \
+            -destination "generic/platform=tvOS Simulator" \
+            -derivedDataPath build/Sim \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            2>&1 | tee build/xcodebuild-sim.log
+
+      - name: Start fixture servers
+        run: |
+          mkdir -p artifacts
+          bash Tests/SmokeTest/servers/prepare_fixtures.sh "$RUNNER_TEMP/fixtures"
+
+          # impacket 只为 SMB 测试服务准备；装不上就跳过 SMB 步骤
+          PY=python3
+          if python3 -m venv "$RUNNER_TEMP/venv" 2>/dev/null \
+             && "$RUNNER_TEMP/venv/bin/pip" -q install --disable-pip-version-check impacket 2>/dev/null \
+             && "$RUNNER_TEMP/venv/bin/python" -c "import impacket" 2>/dev/null; then
+            PY="$RUNNER_TEMP/venv/bin/python"
+          else
+            echo "::warning::impacket 不可用，SMB 相关步骤会跳过"
+            echo "SMB_PORT=0" >> "$GITHUB_ENV"
+          fi
+
+          "$PY" Tests/SmokeTest/servers/webdav_server.py 127.0.0.1 "$WEBDAV_PORT" \
+            "$RUNNER_TEMP/fixtures/webdav" smoke smoke-pass > artifacts/webdav-server.log 2>&1 &
+          python3 Tests/SmokeTest/servers/webdav_server.py 127.0.0.1 "$HLS_PORT" \
+            "$RUNNER_TEMP/fixtures/hls" "" "" > artifacts/hls-server.log 2>&1 &
+          if [ "$SMB_PORT" != "0" ]; then
+            "$PY" Tests/SmokeTest/servers/smb_server.py 127.0.0.1 "$SMB_PORT" MEDIA \
+              "$RUNNER_TEMP/fixtures/smb" smoke smoke-pass > artifacts/smb-server.log 2>&1 &
+          fi
+          sleep 3
+
+          # 先在宿主上自检，免得把服务端问题带进模拟器
+          curl -fsS -u smoke:smoke-pass -X PROPFIND -H "Depth: 1" \
+            "http://127.0.0.1:$WEBDAV_PORT/dav/" -o artifacts/webdav-propfind.xml
+          echo "webdav answers PROPFIND"
+          curl -fsS -o /dev/null "http://127.0.0.1:$HLS_PORT/hls/sample.m3u8"
+          echo "hls serves the playlist"
+          if [ "$SMB_PORT" != "0" ]; then
+            (nc -z 127.0.0.1 "$SMB_PORT" && echo "smb listens on $SMB_PORT") || echo "::warning::SMB 端口没有监听"
+          fi
+
+      - name: Run the app on the simulator and record the result
+        run: |
+          set -o pipefail
+          UDID=$(xcrun simctl list devices available \
+            | grep -E "^\s+Apple TV .* \(([0-9A-F-]{36})\)" | head -1 \
+            | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
+          if [ -z "$UDID" ]; then
+            echo "::error::镜像里没有可用的 Apple TV 模拟器"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "simulator: $UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+
+          APP="build/Sim/Build/Products/SmokeTest-appletvsimulator/AetherTV.app"
+          test -d "$APP" || { echo "::error::找不到 $APP"; find build/Sim/Build/Products -maxdepth 2; exit 1; }
+          xcrun simctl uninstall "$UDID" com.aethertv.player >/dev/null 2>&1 || true
+          xcrun simctl install "$UDID" "$APP"
+          DATA=$(xcrun simctl get_app_container "$UDID" com.aethertv.player data)
+          rm -f "$DATA/Documents/smoke-test-result.json"
+
+          xcrun simctl launch "$UDID" com.aethertv.player --smoke-test \
+            -smokeWebdavPort "$WEBDAV_PORT" -smokeHlsPort "$HLS_PORT" -smokeSmbPort "${SMB_PORT:-0}"
+
+          # 上一步启动的测试服务必须还在监听（进程若随步骤退出，这里立刻暴露）
+          for port in "$WEBDAV_PORT" "$HLS_PORT"; do
+            if ! nc -z 127.0.0.1 "$port"; then
+              echo "::error::端口 $port 没有在监听，测试服务可能随上一步一起退出了"
+              tail -n 20 artifacts/*-server.log || true
+              exit 1
+            fi
+          done
+
+          mkdir -p artifacts/screenshots
+          index=0
+          deadline=$((SECONDS + 420))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if [ -f "$DATA/Documents/smoke-test-result.json" ] \
+               && grep -q '"finishedAt"' "$DATA/Documents/smoke-test-result.json" 2>/dev/null; then
+              echo "result written after ${SECONDS}s"
+              break
+            fi
+            xcrun simctl io "$UDID" screenshot --type=jpeg \
+              "artifacts/screenshots/$(printf %03d "$index")-$(date +%s).jpg" >/dev/null 2>&1 || true
+            index=$((index + 1))
+            sleep 3
+          done
+          xcrun simctl io "$UDID" screenshot --type=jpeg artifacts/screenshots/final.jpg >/dev/null 2>&1 || true
+          cp "$DATA/Documents/smoke-test-result.json" artifacts/ 2>/dev/null \
+            || echo "::warning::App 没有写出 smoke-test-result.json"
+
+          xcrun simctl spawn "$UDID" log show --last 15m \
+            --predicate 'process == "AetherTV"' --style compact > artifacts/app-log.txt 2>&1 || true
+          xcrun simctl shutdown "$UDID" >/dev/null 2>&1 || true
+          ls -la artifacts artifacts/screenshots | head -30
+
+      - name: Evaluate the smoke test result
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+          path = pathlib.Path("artifacts/smoke-test-result.json")
+          if not path.exists():
+              print("::error::没有 smoke-test-result.json：App 可能一启动就退出，看 artifacts/app-log.txt")
+              sys.exit(1)
+          report = json.loads(path.read_text(encoding="utf-8"))
+          print(f"app {report.get('appVersion')} | engine {report.get('engineVersion')} | {report.get('system')}")
+          for step in report.get("steps", []):
+              print(f"  {'ok  ' if step['ok'] else 'FAIL'} {step['name']:26s} {step['durationSeconds']:6.1f}s  {step.get('detail','')[:220]}")
+              if not step["ok"]:
+                  print(f"       -> {step.get('message','')[:500]}")
+          ok = bool(report.get("ok")) and bool(report.get("finishedAt"))
+          print("overall:", "PASS" if ok else "FAIL")
+          sys.exit(0 if ok else 1)
+          PY
+
+      - name: Upload smoke test artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: AetherTV-smoke-test
+          path: |
+            artifacts/
+            build/xcodebuild-sim.log
+          retention-days: 14
+          if-no-files-found: warn

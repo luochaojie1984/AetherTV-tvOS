@@ -69,8 +69,28 @@ AetherEngine 的 5 个高级组件默认**都不编入**，对应的 `LoadOption
 这几项任意一项缺失，首次构建就会直接失败，改动 `project.yml` 时请留意：
 
 - **`scheme: {}`**：XcodeGen 不会为 application 目标自动生成 scheme，而 `xcodebuild -scheme AetherTV` 需要共享 scheme。
-- **`Assets.xcassets/App Icon & Top Shelf Image.brandassets`**：XcodeGen 给 tvOS 应用默认写入 `ASSETCATALOG_COMPILER_APPICON_NAME = App Icon & Top Shelf Image`，资源目录里没有同名图标时 `actool` 会报错；启动图绑定已显式清空。
+- **`Assets.xcassets/App Icon & Top Shelf Image.brandassets`**：XcodeGen 给 tvOS 应用默认写入 `ASSETCATALOG_COMPILER_APPICON_NAME = App Icon & Top Shelf Image`，资源目录里没有同名图标时 `actool` 会报错；启动图绑定已显式清空。图标由 [Scripts/make_tvos_icons.py](Scripts/make_tvos_icons.py) 生成，每个 imageset 条目都必须显式写 `scale`，否则 actool 会把它当成「Any」比例而报错。
 - **`SWIFT_VERSION: 5.0`**：Swift 6 语言模式下并发检查恒为 error，`SWIFT_STRICT_CONCURRENCY: minimal` 会被整个忽略；要让未标注 `Sendable` 的代码只告警，必须用 Swift 5 语言模式。
+
+---
+
+## 模拟器冒烟测试（GitHub Actions）
+
+除了打包，仓库里还有一个 **Smoke Test (tvOS Simulator)** 工作流：它用 `SmokeTest` 构建配置（`SMOKE_TEST` 编译条件）把测试代码编进 App，在 GitHub 的 Apple TV 模拟器里启动，然后由 App 自己走一遍核心链路并写出结果。
+
+工作流会先在宿主机拉起三个测试服务，再让模拟器里的 App 连上去：
+
+| 服务 | 端口 | 内容 |
+| :--- | :--- | :--- |
+| WebDAV（Basic 认证） | 8080 | `Movies/`（`sample.mkv` + 中英外挂字幕）、`shows/S01/`、`中文 目录/` |
+| 纯 HTTP（无认证） | 8081 | HLS 切片 `hls/sample.m3u8` |
+| SMB（impacket，可选） | 1445 | 共享 `MEDIA`，`Movies/sample.mkv` |
+
+App 内的测试步骤（`Tests/SmokeTest/App/SmokeTestRunner.swift`）：设置页 / 媒体源页 / 首页的出图，WebDAV 与 SMB 的目录浏览（含中文与空格路径、外挂字幕匹配），以及 MKV / MP4 / HLS 的播放 —— 每步都会检查是否真的进入播放、能否选中外挂字幕、跳转到 12 秒是否落点，并记录长按变速与预览帧。
+
+结果与截图在运行页面的 **AetherTV-smoke-test** 产物里：`smoke-test-result.json` 是逐步结果，`screenshots/` 是每 3 秒一张的截图（测试片烧录了时间码，可以直接从截图读出播放位置），`app-log.txt` 是 App 的日志。
+
+测试素材由 [Tests/SmokeTest/media/generate.py](Tests/SmokeTest/media/generate.py) 生成（需要 ffmpeg 与 Pillow）；`Tests/` 不属于 App target，打包产物里没有它们，测试代码也只随 `SMOKE_TEST` 条件编入。
 
 ---
 
