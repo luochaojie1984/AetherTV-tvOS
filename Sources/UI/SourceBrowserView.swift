@@ -339,7 +339,7 @@ struct AddMediaSourceView: View {
                     if let testMessage {
                         Label(testMessage, systemImage: testSucceeded ? "checkmark.circle.fill" : "xmark.octagon.fill")
                             .font(.footnote)
-                            .foregroundStyle(testSucceeded ? .green : .orange)
+                            .foregroundStyle(testSucceeded ? Color.green : Color.orange)
                     }
                 }
 
