@@ -481,7 +481,7 @@ final class PlaybackController: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] state in
                 guard let self else { return }
-                let keepAwake = (state == .playing || state == .buffering || state == .seeking)
+                let keepAwake = (state == .playing || state == .loading || state == .seeking)
                 self.setIdleTimerDisabled(keepAwake)
 
                 switch state {
