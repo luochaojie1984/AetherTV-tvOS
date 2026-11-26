@@ -3,7 +3,6 @@ import SwiftUI
 struct SourceBrowserView: View {
     @EnvironmentObject private var sourceStore: MediaSourceStore
     @State private var showAddSourceSheet = false
-    @State private var quickPlayItem: MediaItem?
 
     var body: some View {
         NavigationStack {
@@ -61,9 +60,6 @@ struct SourceBrowserView: View {
                     sourceStore.add(newSource)
                 }
             }
-            .fullScreenCover(item: $quickPlayItem) { item in
-                PlayerScreenView(item: item, playlist: [item], sourceConfig: nil)
-            }
         }
     }
 }
@@ -71,6 +67,9 @@ struct SourceBrowserView: View {
 struct SourceDirectoryView: View {
     let source: MediaSourceConfig
     let currentPath: String
+    /// 由上一级传入的显示名：Emby / Plex / DLNA 的 remotePath 是服务器内部 ID，
+    /// 直接拿来当标题会显示成数字 ID，所以标题由导航方带上。
+    var displayTitle: String? = nil
 
     @EnvironmentObject private var settings: PlayerSettingsStore
     @EnvironmentObject private var historyStore: WatchHistoryStore
@@ -82,6 +81,12 @@ struct SourceDirectoryView: View {
 
     private var playableItems: [MediaItem] {
         items.filter { !$0.isDirectory }
+    }
+
+    private var navigationTitle: String {
+        if let displayTitle, !displayTitle.isEmpty { return displayTitle }
+        if currentPath == "/" || currentPath == "0" || currentPath.isEmpty { return source.name }
+        return (currentPath as NSString).lastPathComponent
     }
 
     var body: some View {
@@ -120,7 +125,7 @@ struct SourceDirectoryView: View {
                     ForEach(items) { item in
                         if item.isDirectory {
                             NavigationLink {
-                                SourceDirectoryView(source: source, currentPath: item.remotePath)
+                                SourceDirectoryView(source: source, currentPath: item.remotePath, displayTitle: item.title)
                             } label: {
                                 Label(item.title, systemImage: "folder.fill")
                                     .font(.headline)
@@ -175,7 +180,7 @@ struct SourceDirectoryView: View {
                 }
             }
         }
-        .navigationTitle(currentPath == "/" || currentPath == "0" ? source.name : (currentPath as NSString).lastPathComponent)
+        .navigationTitle(navigationTitle)
         .task {
             if source.protocolType != .directURL {
                 await loadDirectory()
@@ -223,7 +228,11 @@ struct SourceDirectoryView: View {
                 let parent = (currentPath == "/" || currentPath.isEmpty) ? nil : currentPath
                 items = try await client.browse(source: source, parentId: parent)
             case .dlna:
-                guard let url = URL(string: source.baseURLString) else {
+                // DLNA 没有自动发现：必须由用户提供内容目录的 Control 地址路径
+                guard let path = source.dlnaControlPath else {
+                    throw MediaServerError.missingControlURL
+                }
+                guard let url = URL(string: source.hostWithScheme + path) else {
                     throw MediaServerError.invalidURL
                 }
                 let client = DLNADiscoveryClient()
@@ -243,6 +252,7 @@ struct SourceDirectoryView: View {
 
 struct AddMediaSourceView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var settings: PlayerSettingsStore
     let onSave: (MediaSourceConfig) -> Void
 
     @State private var name = "客厅 NAS"
@@ -255,8 +265,16 @@ struct AddMediaSourceView: View {
     @State private var username = ""
     @State private var password = ""
     @State private var apiToken = ""
+    @State private var userId = ""
     @State private var limitSingleConnection = false
     @State private var holdSourceConnection = false
+    @State private var isTesting = false
+    @State private var testSucceeded = false
+    @State private var testMessage: String?
+
+    private var usesControlPath: Bool {
+        protocolType == .dlna
+    }
 
     var body: some View {
         NavigationStack {
@@ -270,20 +288,33 @@ struct AddMediaSourceView: View {
                     }
                     .onChange(of: protocolType) { _, newType in
                         portText = String(newType.defaultPort)
+                        // DLNA 没有自动发现，给一个常见服务器的 Control 路径示例，用户可改
+                        if newType == .dlna && (basePath.isEmpty || basePath == "/") {
+                            basePath = "/MediaServer/ContentDirectory/Control"
+                        }
+                        testMessage = nil
                     }
                     TextField("服务器 IP 或主机名", text: $host)
-                    TextField("端口", text: $portText)
-                    if protocolType != .smb {
+                    TextField("端口（0 表示用默认端口）", text: $portText)
+                    if usesControlPath {
+                        TextField("DLNA Control 路径（如 /MediaServer/ContentDirectory/Control）", text: $basePath)
+                        Text("DLNA 不做自动发现，需要填写内容目录（ContentDirectory）的 Control 地址路径；不同服务器的路径不同，社区常见值：MiniDLNA 为 /ctl/ContentDir，Windows 媒体共享为 /ContentDirectory/Control。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else if protocolType == .smb {
+                        TextField("SMB 共享名（如 video / media）", text: $shareName)
+                    } else {
                         Toggle("启用 HTTPS", isOn: $useHTTPS)
                         TextField("基础路径（如 /dav 或留空）", text: $basePath)
-                    } else {
-                        TextField("SMB 共享名（如 video / media）", text: $shareName)
                     }
                 }
 
                 Section("身份认证") {
                     if protocolType == .emby || protocolType == .jellyfin || protocolType == .plex {
                         TextField("API Key / X-Plex-Token", text: $apiToken)
+                        if protocolType != .plex {
+                            TextField("用户 ID（可留空，自动取第一个用户）", text: $userId)
+                        }
                     } else if protocolType != .dlna {
                         TextField("用户名（访客可留空）", text: $username)
                         SecureField("密码", text: $password)
@@ -295,29 +326,90 @@ struct AddMediaSourceView: View {
                     Toggle("保持长连接拉流（避免频繁 Range 断连）", isOn: $holdSourceConnection)
                 }
 
+                Section("连接测试") {
+                    Button {
+                        Task { await testConnection() }
+                    } label: {
+                        HStack(spacing: 12) {
+                            if isTesting { ProgressView() }
+                            Text(isTesting ? "正在测试…" : "测试连接（读取根目录）")
+                        }
+                    }
+                    .disabled(isTesting || host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if let testMessage {
+                        Label(testMessage, systemImage: testSucceeded ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                            .font(.footnote)
+                            .foregroundStyle(testSucceeded ? .green : .orange)
+                    }
+                }
+
                 Section {
                     Button("保存媒体源") {
-                        let config = MediaSourceConfig(
-                            name: name.isEmpty ? host : name,
-                            protocolType: protocolType,
-                            host: host,
-                            port: Int(portText) ?? protocolType.defaultPort,
-                            useHTTPS: useHTTPS,
-                            basePath: basePath,
-                            username: username,
-                            password: password,
-                            apiToken: apiToken,
-                            shareName: shareName,
-                            limitSingleConnection: limitSingleConnection,
-                            holdSourceConnection: holdSourceConnection
-                        )
-                        onSave(config)
+                        onSave(draftConfig)
                         dismiss()
                     }
                     .disabled(host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .navigationTitle("添加媒体源")
+        }
+    }
+
+    private var draftConfig: MediaSourceConfig {
+        MediaSourceConfig(
+            name: name.isEmpty ? host : name,
+            protocolType: protocolType,
+            host: host,
+            port: Int(portText) ?? protocolType.defaultPort,
+            useHTTPS: useHTTPS,
+            basePath: basePath,
+            username: username,
+            password: password,
+            apiToken: apiToken,
+            userId: userId,
+            shareName: shareName,
+            limitSingleConnection: limitSingleConnection,
+            holdSourceConnection: holdSourceConnection
+        )
+    }
+
+    /// 保存前先真读一次根目录：填错地址/账号时不用等保存后才发现
+    private func testConnection() async {
+        let config = draftConfig
+        isTesting = true
+        testMessage = nil
+        defer { isTesting = false }
+
+        do {
+            if config.protocolType == .directURL {
+                guard URL(string: config.baseURLString) != nil else { throw MediaServerError.invalidURL }
+                testSucceeded = true
+                testMessage = "直链无需测试，保存后可直接播放"
+                return
+            }
+            let count: Int
+            switch config.protocolType {
+            case .webdav:
+                count = try await WebDAVClient(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
+                    .listDirectory(source: config, path: "/").count
+            case .emby, .jellyfin, .plex:
+                count = try await MediaServerClients(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
+                    .browse(source: config, parentId: nil).count
+            case .dlna:
+                guard let path = config.dlnaControlPath else { throw MediaServerError.missingControlURL }
+                guard let url = URL(string: config.hostWithScheme + path) else { throw MediaServerError.invalidURL }
+                count = try await DLNADiscoveryClient()
+                    .browse(controlURL: url, objectId: "0", sourceId: config.id).count
+            case .smb:
+                count = try await SMBSourceClient().listDirectory(source: config, path: "/").count
+            case .directURL:
+                count = 0
+            }
+            testSucceeded = true
+            testMessage = "连接成功，根目录 \(count) 项"
+        } catch {
+            testSucceeded = false
+            testMessage = error.localizedDescription
         }
     }
 }

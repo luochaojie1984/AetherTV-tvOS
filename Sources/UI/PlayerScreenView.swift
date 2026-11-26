@@ -39,8 +39,10 @@ struct PlayerScreenView: View {
             )
             .ignoresSafeArea()
 
-            // 3. Siri Remote 遥控器底层长按/短按捕获层（不拦截控制面板焦点）
-            if !showControlPanel {
+            // 3. Siri Remote 遥控器底层长按/短按捕获层。
+            //    控制面板打开时让位给面板按钮；错误浮层出现时也移除，
+            //    否则这层会在 pressesBegan 里吞掉方向键，用户无法在「重试/软解/返回」间移动焦点。
+            if !showControlPanel && controller.activeErrorMessage == nil {
                 RemotePressCaptureView(
                     onLeftDown: {
                         revealOverlayTemporarily(keepVisible: true)
@@ -306,6 +308,11 @@ private final class RemotePressViewController: UIViewController {
 
     override func loadView() {
         view = RemotePressView()
+    }
+
+    /// 存在期间优先把焦点交给捕获层，避免焦点悬空导致方向键失灵
+    override var preferredFocusEnvironments: [UIFocusEnvironment] {
+        [view]
     }
 
     override func viewDidAppear(_ animated: Bool) {

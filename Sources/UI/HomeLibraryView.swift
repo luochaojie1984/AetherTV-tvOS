@@ -51,40 +51,9 @@ struct HomeLibraryView: View {
                         }
                     }
 
-                    // 2. 已配置的局域网媒体源
-                    if !sourceStore.sources.isEmpty {
-                        shelfSection(title: "局域网媒体源") {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                LazyHStack(spacing: 30) {
-                                    ForEach(sourceStore.sources) { src in
-                                        NavigationLink {
-                                            SourceDirectoryView(source: src, currentPath: "/")
-                                        } label: {
-                                            VStack(alignment: .leading, spacing: 12) {
-                                                Image(systemName: src.protocolType.iconName)
-                                                    .font(.system(size: 38))
-                                                    .foregroundStyle(.white)
-                                                Spacer()
-                                                Text(src.name)
-                                                    .font(.headline)
-                                                    .lineLimit(1)
-                                                Text("\(src.protocolType.rawValue) · \(src.host)")
-                                                    .font(.caption)
-                                                    .foregroundStyle(.secondary)
-                                                    .lineLimit(1)
-                                            }
-                                            .padding(24)
-                                            .frame(width: 340, height: 180, alignment: .leading)
-                                            .background(.ultraThinMaterial)
-                                        }
-                                        .buttonStyle(.card)
-                                    }
-                                }
-                                .padding(.horizontal, 60)
-                                .padding(.vertical, 20)
-                            }
-                        }
-                    } else {
+                    // 2. 媒体源入口只保留在「媒体源」标签页，首页不再重复同一批卡片；
+                    //    一个源都没有时给一条指路提示
+                    if sourceStore.sources.isEmpty {
                         VStack(spacing: 16) {
                             Image(systemName: "externaldrive.badge.wifi")
                                 .font(.system(size: 64))

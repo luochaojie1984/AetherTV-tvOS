@@ -48,13 +48,13 @@ struct BottomAppleProgressBar: View {
                     // 标题与原生胶囊徽章行（紧贴进度条上方）
                     HStack(alignment: .firstTextBaseline, spacing: 14) {
                         Text(title)
-                            .font(.system(size: 28, weight: .semibold))
+                            .font(.system(size: 30, weight: .semibold))
                             .foregroundStyle(.white)
                             .lineLimit(1)
 
                         if let subtitle, !subtitle.isEmpty {
                             Text(subtitle)
-                                .font(.system(size: 20, weight: .medium))
+                                .font(.system(size: 22, weight: .medium))
                                 .foregroundStyle(.white.opacity(0.68))
                                 .lineLimit(1)
                         }
@@ -72,7 +72,7 @@ struct BottomAppleProgressBar: View {
                                     Image(systemName: "chevron.down.circle.fill")
                                     Text("设置与字幕")
                                 }
-                                .font(.system(size: 18, weight: .medium))
+                                .font(.system(size: 19, weight: .medium))
                                 .foregroundStyle(.white.opacity(0.75))
                             }
                         }
@@ -82,18 +82,19 @@ struct BottomAppleProgressBar: View {
                     ZStack(alignment: .leading) {
                         // 底轨
                         Capsule(style: .continuous)
-                            .fill(Color.white.opacity(0.24))
+                            .fill(Color.white.opacity(0.30))
                             .frame(height: scrubEngine.isScrubbing ? 11 : 7)
 
                         // 缓冲轨
                         Capsule(style: .continuous)
-                            .fill(Color.white.opacity(0.40))
+                            .fill(Color.white.opacity(0.46))
                             .frame(width: barWidth * bufferedFraction, height: scrubEngine.isScrubbing ? 11 : 7)
 
                         // 已播进度轨
                         Capsule(style: .continuous)
                             .fill(Color.white)
                             .frame(width: max(thumbX, 0), height: scrubEngine.isScrubbing ? 11 : 7)
+                            .shadow(color: .black.opacity(0.45), radius: 3, x: 0, y: 0)
 
                         // 章节刻度点
                         ForEach(engine.mediaChapters, id: \.id) { chapter in
@@ -122,7 +123,7 @@ struct BottomAppleProgressBar: View {
                     // 时间行（左已播，右剩余，等宽数字）
                     HStack {
                         Text(Self.formatTimestamp(displayTime))
-                            .font(.system(size: 20, weight: .medium, design: .rounded))
+                            .font(.system(size: 22, weight: .medium, design: .rounded))
                             .monospacedDigit()
                             .foregroundStyle(.white.opacity(0.92))
 
@@ -133,7 +134,7 @@ struct BottomAppleProgressBar: View {
                                 ProgressView()
                                     .scaleEffect(0.7)
                                 Text("正在缓冲…")
-                                    .font(.system(size: 18, weight: .medium))
+                                    .font(.system(size: 19, weight: .medium))
                                     .foregroundStyle(.white.opacity(0.75))
                             }
                         }
@@ -141,21 +142,21 @@ struct BottomAppleProgressBar: View {
                         Spacer()
 
                         Text("-\(Self.formatTimestamp(max(duration - displayTime, 0)))")
-                            .font(.system(size: 20, weight: .medium, design: .rounded))
+                            .font(.system(size: 22, weight: .medium, design: .rounded))
                             .monospacedDigit()
                             .foregroundStyle(.white.opacity(0.72))
                     }
                 }
                 .padding(.horizontal, 48)
-                .padding(.top, 26)
-                // 刻意贴近屏幕最底部（配合 ignoresSafeArea(.bottom)）
-                .padding(.bottom, 16)
+                .padding(.top, 40)
+                // 刻意贴近屏幕最底部（配合 ignoresSafeArea(.bottom)），留出过扫描余量
+                .padding(.bottom, 24)
                 .background(
                     LinearGradient(
                         colors: [
                             Color.black.opacity(0.0),
-                            Color.black.opacity(0.55),
-                            Color.black.opacity(0.84)
+                            Color.black.opacity(0.62),
+                            Color.black.opacity(0.92)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -228,7 +229,7 @@ struct BottomAppleProgressBar: View {
             Text("\(Int(scrubEngine.speedMultiplier.rounded()))x 实时预览")
                 .monospacedDigit()
         }
-        .font(.system(size: 18, weight: .semibold, design: .rounded))
+        .font(.system(size: 20, weight: .semibold, design: .rounded))
         .foregroundStyle(.black)
         .padding(.horizontal, 14)
         .padding(.vertical, 5)

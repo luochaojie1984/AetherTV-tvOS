@@ -30,7 +30,7 @@ enum MediaProtocolType: String, Codable, CaseIterable, Identifiable, Sendable {
         case .emby: return 8096
         case .jellyfin: return 8096
         case .plex: return 32400
-        case .dlna: return 1900
+        case .dlna: return 0
         case .directURL: return 80
         }
     }
@@ -57,31 +57,39 @@ struct MediaSourceConfig: Identifiable, Codable, Hashable, Sendable {
     var customUserAgent: String = "AetherTV/1.0"
 
     var baseURLString: String {
-        let scheme: String
-        switch protocolType {
-        case .smb:
-            scheme = "smb"
-        case .webdav, .emby, .jellyfin, .plex, .dlna, .directURL:
-            scheme = useHTTPS ? "https" : "http"
+        if protocolType == .smb {
+            let portPart = (port > 0 && port != 445) ? ":\(port)" : ""
+            return "smb://\(cleanedHost)\(portPart)"
         }
-        let cleanedHost = host
+        return hostWithScheme + normalizedPath
+    }
+
+    /// 只含协议、主机与非默认端口的地址（不含路径）。DLNA 的 Control URL 需要单独拼路径。
+    var hostWithScheme: String {
+        let scheme = useHTTPS ? "https" : "http"
+        let defaultPort = useHTTPS ? 443 : 80
+        let portPart = (port > 0 && port != defaultPort) ? ":\(port)" : ""
+        return "\(scheme)://\(cleanedHost)\(portPart)"
+    }
+
+    /// DLNA 内容目录 Control 的路径；`basePath` 为空或 "/" 表示没有填写
+    var dlnaControlPath: String? {
+        let trimmed = basePath.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+        return trimmed.isEmpty ? nil : "/" + trimmed
+    }
+
+    private var cleanedHost: String {
+        host
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "http://", with: "")
             .replacingOccurrences(of: "https://", with: "")
             .replacingOccurrences(of: "smb://", with: "")
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let defaultStandardPort = useHTTPS ? 443 : 80
-        let portPart = (port > 0 && port != defaultStandardPort && protocolType != .smb)
-            || (protocolType == .smb && port > 0 && port != 445)
-            ? ":\(port)" : ""
-        let normalizedPath: String
-        if basePath.isEmpty || basePath == "/" {
-            normalizedPath = ""
-        } else {
-            let trimmed = basePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            normalizedPath = "/\(trimmed)"
-        }
-        return "\(scheme)://\(cleanedHost)\(portPart)\(normalizedPath)"
+    }
+
+    private var normalizedPath: String {
+        let trimmed = basePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return trimmed.isEmpty ? "" : "/" + trimmed
     }
 }
 

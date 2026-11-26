@@ -3,6 +3,7 @@ import Foundation
 enum MediaServerError: LocalizedError {
     case invalidURL
     case missingCredentials
+    case missingControlURL
     case serverError(String)
 
     var errorDescription: String? {
@@ -11,6 +12,8 @@ enum MediaServerError: LocalizedError {
             return "媒体服务器地址无效。"
         case .missingCredentials:
             return "请填写服务器 API Token（或用户名密码）。"
+        case .missingControlURL:
+            return "DLNA 需要填写内容目录的 Control 地址路径（社区常见值：MiniDLNA 为 /ctl/ContentDir，Windows 媒体共享为 /ContentDirectory/Control）。"
         case .serverError(let msg):
             return "媒体服务器返回错误：\(msg)"
         }
@@ -38,16 +41,35 @@ final class MediaServerClients: Sendable {
 
     // MARK: - Emby / Jellyfin
 
+    /// Emby / Jellyfin 的库列表要用户 ID：优先用配置里的，否则用 API Key 列出用户取第一个。
+    /// 没有用户 ID 时 `/Items?Recursive=false` 在真实 Emby 上通常返回空列表。
+    private func resolvedEmbyUserId(
+        source: MediaSourceConfig,
+        session: URLSession,
+        headers: [String: String]
+    ) async -> String? {
+        if !source.userId.isEmpty { return source.userId }
+        guard let url = URL(string: "\(source.baseURLString)/Users") else { return nil }
+        var request = URLRequest(url: url)
+        for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
+        guard let (data, response) = try? await session.data(for: request),
+              let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+              let users = try? JSONDecoder().decode([EmbyUserDTO].self, from: data) else { return nil }
+        return users.first(where: { $0.Policy?.IsAdministrator == true })?.Id ?? users.first?.Id
+    }
+
     private func browseEmbyOrJellyfin(source: MediaSourceConfig, parentId: String?) async throws -> [MediaItem] {
         guard !source.apiToken.isEmpty else { throw MediaServerError.missingCredentials }
         let session = NetworkPitfallGuards.makeResilientSession(allowSelfSignedLAN: allowSelfSignedLAN)
         let headers = NetworkPitfallGuards.standardHTTPHeaders(for: source)
 
         let endpoint: String
+        let userId = await resolvedEmbyUserId(source: source, session: session, headers: headers)
         if let parentId, !parentId.isEmpty {
-            endpoint = "\(source.baseURLString)/Items?ParentId=\(parentId)&Fields=MediaSources,Overview,RunTimeTicks&SortBy=SortName&SortOrder=Ascending"
-        } else if !source.userId.isEmpty {
-            endpoint = "\(source.baseURLString)/Users/\(source.userId)/Views"
+            let itemsBase = userId.map { "\(source.baseURLString)/Users/\($0)/Items" } ?? "\(source.baseURLString)/Items"
+            endpoint = "\(itemsBase)?ParentId=\(parentId)&Fields=MediaSources,Overview,RunTimeTicks&SortBy=SortName&SortOrder=Ascending"
+        } else if let userId {
+            endpoint = "\(source.baseURLString)/Users/\(userId)/Views"
         } else {
             endpoint = "\(source.baseURLString)/Items?Recursive=false&Fields=MediaSources,Overview,RunTimeTicks"
         }
@@ -179,6 +201,16 @@ final class MediaServerClients: Sendable {
 }
 
 // MARK: - Emby / Jellyfin DTOs
+
+private struct EmbyUserDTO: Decodable {
+    let Id: String
+    let Name: String?
+    let Policy: Policy?
+
+    struct Policy: Decodable {
+        let IsAdministrator: Bool?
+    }
+}
 
 private struct EmbyItemsResponse: Decodable {
     let Items: [EmbyItemDTO]
