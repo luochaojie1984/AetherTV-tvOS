@@ -71,7 +71,7 @@ final class SMBSourceClient: Sendable {
             try await client.listDirectory(path: directoryPath, pattern: "*")
         }
 
-        let byName: (SMBClient.File, SMBClient.File) -> Bool = {
+        let byName: (File, File) -> Bool = {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
         let visible = files.filter { !Self.isNoise($0) }
@@ -157,15 +157,15 @@ final class SMBSourceClient: Sendable {
             throw SMBClientError.connectionFailed(error.localizedDescription)
         }
 
-        try? await client.disconnectShare()
-        try? await client.logoff()
+        _ = try? await client.disconnectShare()
+        _ = try? await client.logoff()
         // logoff() 只结束 SMB 会话，底层 TCP 连接要一并断开，否则 socket 会挂到对象释放
         client.session.disconnect()
         return result
     }
 
     /// "." / ".."、以 "." 开头的隐藏项，以及群晖的 @eaDir / #recycle 等缩略图与回收站目录
-    private static func isNoise(_ file: SMBClient.File) -> Bool {
+    private static func isNoise(_ file: File) -> Bool {
         if file.name == "." || file.name == ".." { return true }
         if file.name.hasPrefix(".") || file.name.hasPrefix("@eaDir") || file.name == "#recycle" { return true }
         return false

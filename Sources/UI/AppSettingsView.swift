@@ -53,7 +53,12 @@ struct AppSettingsView: View {
 
                 Section("局域网与证书避坑") {
                     Toggle("信任局域网自签名 HTTPS 证书", isOn: $settings.allowSelfSignedCertificates)
-                    Stepper("前向缓冲分片数：\(settings.forwardBufferSegments)（约 \(settings.forwardBufferSegments * 4) 秒）", value: $settings.forwardBufferSegments, in: 4...40, step: 2)
+                    // tvOS 没有 SwiftUI 的 Stepper，用 Picker 选择缓冲分片数（与同页其它选项一致）
+                    Picker("前向缓冲分片数", selection: $settings.forwardBufferSegments) {
+                        ForEach(Array(stride(from: 4, through: 40, by: 2)), id: \.self) { segments in
+                            Text("\(segments) 片（约 \(segments * 4) 秒）").tag(segments)
+                        }
+                    }
                 }
 
                 Section("当前 Apple TV 显示能力与引擎诊断") {

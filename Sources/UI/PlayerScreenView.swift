@@ -279,6 +279,12 @@ private struct RemotePressCaptureView: UIViewControllerRepresentable {
     }
 }
 
+/// tvOS 的焦点引擎作用于 view 而不是 view controller：
+/// 让这个 view 可获焦，按键事件就会沿响应链交给 RemotePressViewController。
+private final class RemotePressView: UIView {
+    override var canBecomeFocused: Bool { true }
+}
+
 private final class RemotePressViewController: UIViewController {
     var onLeftDown: (() -> Void)?
     var onLeftUp: (() -> Void)?
@@ -290,7 +296,9 @@ private final class RemotePressViewController: UIViewController {
     var onUp: (() -> Void)?
     var onMenu: (() -> Void)?
 
-    override var canBecomeFocused: Bool { true }
+    override func loadView() {
+        view = RemotePressView()
+    }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)

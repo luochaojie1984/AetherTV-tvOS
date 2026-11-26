@@ -334,8 +334,9 @@ final class PlaybackController: ObservableObject {
         isPrewarmingNextEpisode = true
         Task.detached { [weak self] in
             _ = await AetherEngine.prewarm(url: nextURL, httpHeaders: next.httpHeaders)
+            guard let self else { return }
             await MainActor.run {
-                self?.isPrewarmingNextEpisode = false
+                self.isPrewarmingNextEpisode = false
             }
         }
     }

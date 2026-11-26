@@ -1,0 +1,29 @@
+[Script Info]
+Title: AetherTV smoke test
+ScriptType: v4.00+
+PlayResX: 3840
+PlayResY: 2160
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Source Han Sans SC,120,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,2,60,60,120,1
+Style: Accent,Source Han Sans SC,140,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,2,60,60,120,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.50,0:00:03.50,Default,,0,0,0,,{\pos(1920,1560)}冒烟字幕 1（第 0-3 秒）
+Dialogue: 1,0:00:00.70,0:00:03.30,Accent,,0,0,0,,{\b1\c&H00E5FF&\pos(1920,1320)}加粗黄色 · 第 1 条
+Dialogue: 0,0:00:04.00,0:00:07.00,Default,,0,0,0,,{\pos(1920,1560)}冒烟字幕 2（第 4-7 秒）
+Dialogue: 1,0:00:04.20,0:00:06.80,Accent,,0,0,0,,{\i1\c&HE5E5FF&\pos(1920,1320)}斜体粉色 · 第 2 条
+Dialogue: 0,0:00:07.50,0:00:10.50,Default,,0,0,0,,{\pos(1920,1560)}冒烟字幕 3（第 7-10 秒）
+Dialogue: 0,0:00:11.00,0:00:14.00,Default,,0,0,0,,{\pos(1920,1560)}冒烟字幕 4（第 11-14 秒）
+Dialogue: 1,0:00:11.20,0:00:13.80,Accent,,0,0,0,,{\b1\c&H00E5FF&\pos(1920,1320)}加粗黄色 · 第 4 条
+Dialogue: 0,0:00:14.50,0:00:17.50,Default,,0,0,0,,{\pos(1920,1560)}冒烟字幕 5（第 14-17 秒）
+Dialogue: 1,0:00:14.70,0:00:17.30,Accent,,0,0,0,,{\i1\c&HE5E5FF&\pos(1920,1320)}斜体粉色 · 第 5 条
+Dialogue: 0,0:00:18.00,0:00:21.00,Default,,0,0,0,,{\pos(1920,1560)}冒烟字幕 6（第 18-21 秒）
+Dialogue: 0,0:00:21.50,0:00:24.50,Default,,0,0,0,,{\pos(1920,1560)}冒烟字幕 7（第 21-24 秒）
+Dialogue: 1,0:00:21.70,0:00:24.30,Accent,,0,0,0,,{\b1\c&H00E5FF&\pos(1920,1320)}加粗黄色 · 第 7 条
+Dialogue: 0,0:00:25.00,0:00:28.00,Default,,0,0,0,,{\pos(1920,1560)}冒烟字幕 8（第 25-28 秒）
+Dialogue: 1,0:00:25.20,0:00:27.80,Accent,,0,0,0,,{\i1\c&HE5E5FF&\pos(1920,1320)}斜体粉色 · 第 8 条

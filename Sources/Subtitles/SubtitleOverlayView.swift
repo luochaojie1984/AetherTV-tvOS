@@ -162,8 +162,8 @@ struct SubtitleOverlayView: View {
         let scaleY = containerSize.height / max(canvasH, 1)
         let drawW = CGFloat(img.cgImage.width) * scaleX
         let drawH = CGFloat(img.cgImage.height) * scaleY
-        let posX = img.position.x * containerSize.width + drawW / 2
-        let posY = img.position.y * containerSize.height + drawH / 2
+        let posX = img.position.minX * containerSize.width + drawW / 2
+        let posY = img.position.minY * containerSize.height + drawH / 2
 
         Image(uiImage: uiImage)
             .resizable()
