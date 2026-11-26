@@ -52,15 +52,17 @@ struct HomeLibraryView: View {
                     }
 
                     // 2. 媒体源入口只保留在「媒体源」标签页，首页不再重复同一批卡片；
-                    //    一个源都没有时给一条指路提示
-                    if sourceStore.sources.isEmpty {
+                    //    一条观看记录都没有时给一条轻量指路，避免首页空荡
+                    if historyStore.continueWatching.isEmpty && historyStore.history.isEmpty {
                         VStack(spacing: 16) {
-                            Image(systemName: "externaldrive.badge.wifi")
+                            Image(systemName: sourceStore.sources.isEmpty ? "externaldrive.badge.wifi" : "play.rectangle.on.rectangle")
                                 .font(.system(size: 64))
                                 .foregroundStyle(.secondary)
-                            Text("还没有添加局域网媒体源")
+                            Text(sourceStore.sources.isEmpty ? "还没有添加局域网媒体源" : "从媒体源里挑一部片子开始")
                                 .font(.title2.bold())
-                            Text("请切换到顶部的「媒体源」标签页，添加您的 SMB、WebDAV、Emby、Jellyfin、Plex 或 DLNA 服务器。")
+                            Text(sourceStore.sources.isEmpty
+                                 ? "请切换到顶部的「媒体源」标签页，添加您的 SMB、WebDAV、Emby、Jellyfin、Plex 或 DLNA 服务器。"
+                                 : "打开顶部的「媒体源」标签页浏览 NAS 目录；播放过的内容会出现在这里的「继续观看」。")
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
                                 .frame(maxWidth: 760)
