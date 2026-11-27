@@ -196,31 +196,31 @@ struct SourceBrowserView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 60)
-                    .padding(.vertical, 32)
+                    .padding(.horizontal, 72)
+                    .padding(.vertical, 40)
                 }
             }
-            .sheet(item: $addingProtocol) { proto in
+            .fullScreenCover(item: $addingProtocol) { proto in
                 AddMediaSourceView(initialProtocol: proto) { newSource in
                     sourceStore.add(newSource)
                 }
             }
-            .sheet(item: $editingSource) { source in
+            .fullScreenCover(item: $editingSource) { source in
                 AddMediaSourceView(editing: source) { updated in
                     sourceStore.update(updated)
                 }
             }
-            .sheet(item: $discoveredPrefill) { service in
+            .fullScreenCover(item: $discoveredPrefill) { service in
                 AddMediaSourceView(discoveredService: service) { newSource in
                     sourceStore.add(newSource)
                 }
             }
-            .sheet(isPresented: $showQRConfigSheet) {
+            .fullScreenCover(isPresented: $showQRConfigSheet) {
                 QuickConfigQRView { imported in
                     sourceStore.add(imported)
                 }
             }
-            .sheet(isPresented: $showLANDiscoverySheet) {
+            .fullScreenCover(isPresented: $showLANDiscoverySheet) {
                 LANDiscoverySheetView { service in
                     discoveredPrefill = service
                 }
@@ -599,38 +599,44 @@ struct AddMediaSourceView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 34) {
                         // 顶部标题与快捷工具按钮
-                        HStack(alignment: .center, spacing: 20) {
-                            AetherIconMedallion(
-                                systemName: protocolType.cardSymbolName,
-                                colors: protocolType.gradientColors,
-                                size: 68
-                            )
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(editingId == nil ? "添加 \(protocolType.displayName)" : "编辑 \(protocolType.displayName)")
-                                    .font(.system(size: 38, weight: .bold))
-                                    .foregroundStyle(Color.white)
-                                Text(protocolType.shortTagline)
-                                    .font(.system(size: 20))
-                                    .foregroundStyle(Color.white.opacity(0.65))
+                        VStack(alignment: .leading, spacing: 20) {
+                            HStack(alignment: .center, spacing: 20) {
+                                AetherIconMedallion(
+                                    systemName: protocolType.cardSymbolName,
+                                    colors: protocolType.gradientColors,
+                                    size: 68
+                                )
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(editingId == nil ? "添加 \(protocolType.displayName)" : "编辑 \(protocolType.displayName)")
+                                        .font(.system(size: 38, weight: .bold))
+                                        .foregroundStyle(Color.white)
+                                    Text(protocolType.shortTagline)
+                                        .font(.system(size: 20))
+                                        .foregroundStyle(Color.white.opacity(0.65))
+                                }
+                                Spacer()
                             }
-                            Spacer()
-                            Button {
-                                AppleTVSoundEffects.playSelect()
-                                showQRConfigSheet = true
-                            } label: {
-                                Label("手机扫码填写", systemImage: "qrcode.viewfinder")
-                                    .font(.system(size: 20, weight: .semibold))
-                            }
-                            .buttonStyle(AetherPillButtonStyle(accent: .cyan))
 
-                            Button {
-                                AppleTVSoundEffects.playSelect()
-                                showLANDiscoverySheet = true
-                            } label: {
-                                Label("扫描局域网", systemImage: "dot.radiowaves.left.and.right")
-                                    .font(.system(size: 20, weight: .semibold))
+                            HStack(spacing: 18) {
+                                Button {
+                                    AppleTVSoundEffects.playSelect()
+                                    showQRConfigSheet = true
+                                } label: {
+                                    Label("手机扫码填写", systemImage: "qrcode.viewfinder")
+                                        .font(.system(size: 21, weight: .semibold))
+                                }
+                                .buttonStyle(AetherPillButtonStyle(accent: .cyan))
+
+                                Button {
+                                    AppleTVSoundEffects.playSelect()
+                                    showLANDiscoverySheet = true
+                                } label: {
+                                    Label("扫描局域网设备", systemImage: "dot.radiowaves.left.and.right")
+                                        .font(.system(size: 21, weight: .semibold))
+                                }
+                                .buttonStyle(AetherPillButtonStyle(accent: .purple))
                             }
-                            .buttonStyle(AetherPillButtonStyle(accent: .purple))
+                            .padding(.horizontal, 6)
                         }
 
                         // 协议图标切换栏（SMB 排第一，全部可视化图标按钮，不再藏进文字 Picker）
@@ -662,24 +668,29 @@ struct AddMediaSourceView: View {
                                         ))
                                     }
                                 }
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 4)
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 12)
                             }
                         }
 
-                        // 基本连接信息卡片
+                        // 基本连接信息卡片（单栏宽松排版，杜绝输入框太窄变形或文字截断）
                         glassGroupBox(title: "连接地址", icon: "network") {
-                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 24), GridItem(.flexible(), spacing: 24)], spacing: 20) {
-                                inputField(title: "显示名称（可留空）", placeholder: "例如：家庭 NAS", text: $name)
-                                inputField(title: "服务器 IP 或主机名", placeholder: "例如：192.168.1.100 或 nas.local", text: $host)
-                                inputField(title: "端口（0 表示默认端口）", placeholder: String(protocolType.defaultPort), text: $portText)
+                            VStack(spacing: 20) {
+                                HStack(spacing: 24) {
+                                    inputField(title: "显示名称（可留空）", placeholder: "例如：家庭 NAS", text: $name)
+                                    inputField(title: "服务器 IP 或主机名", placeholder: "例如：192.168.1.100 或 nas.local", text: $host)
+                                }
+                                HStack(spacing: 24) {
+                                    inputField(title: "端口（0 表示默认端口）", placeholder: String(protocolType.defaultPort), text: $portText)
+                                        .frame(maxWidth: 360)
 
-                                if protocolType == .smb {
-                                    inputField(title: "SMB 共享文件夹名（Share Name）", placeholder: "例如：media 或 share", text: $shareName)
-                                } else if protocolType == .dlna {
-                                    inputField(title: "DLNA ContentDirectory Control 路径", placeholder: "例如：/ctl/ContentDir", text: $basePath)
-                                } else {
-                                    inputField(title: "基础路径（可留空）", placeholder: "例如：/dav 或 /", text: $basePath)
+                                    if protocolType == .smb {
+                                        inputField(title: "SMB 共享文件夹名（可留空，连接后自动列出全部共享）", placeholder: "留空则自动列出共享，或填如 media", text: $shareName)
+                                    } else if protocolType == .dlna {
+                                        inputField(title: "DLNA ContentDirectory Control 路径", placeholder: "例如：/ctl/ContentDir", text: $basePath)
+                                    } else {
+                                        inputField(title: "基础路径（可留空）", placeholder: "例如：/dav 或 /", text: $basePath)
+                                    }
                                 }
                             }
 
@@ -698,11 +709,15 @@ struct AddMediaSourceView: View {
                         if protocolType != .dlna {
                             glassGroupBox(title: "身份认证（密码与 Token 经 Keychain 加密保存）", icon: "key.fill") {
                                 if protocolType == .emby || protocolType == .jellyfin {
-                                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 24), GridItem(.flexible(), spacing: 24)], spacing: 20) {
-                                        inputField(title: "API Key / AccessToken", placeholder: "粘贴 Token 或下方用账号登录获取", text: $apiToken)
-                                        inputField(title: "用户 ID（可留空或点击下方选择）", placeholder: "留空将自动识别当前用户", text: $userId)
-                                        inputField(title: "用户名（用于登录换取 Token，可选）", placeholder: "例如：admin", text: $username)
-                                        secureInputField(title: "密码（用于登录换取 Token，可选）", placeholder: "输入密码", text: $password)
+                                    VStack(spacing: 20) {
+                                        HStack(spacing: 24) {
+                                            inputField(title: "API Key / AccessToken", placeholder: "粘贴 Token 或下方用账号登录获取", text: $apiToken)
+                                            inputField(title: "用户 ID（可留空或点击下方选择）", placeholder: "留空将自动识别当前用户", text: $userId)
+                                        }
+                                        HStack(spacing: 24) {
+                                            inputField(title: "用户名（用于登录换取 Token，可选）", placeholder: "例如：admin", text: $username)
+                                            secureInputField(title: "密码（用于登录换取 Token，可选）", placeholder: "输入密码", text: $password)
+                                        }
                                     }
 
                                     HStack(spacing: 18) {
@@ -763,7 +778,7 @@ struct AddMediaSourceView: View {
                                 } else if protocolType == .plex {
                                     inputField(title: "X-Plex-Token", placeholder: "输入 Plex 访问令牌", text: $apiToken)
                                 } else {
-                                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 24), GridItem(.flexible(), spacing: 24)], spacing: 20) {
+                                    HStack(spacing: 24) {
                                         inputField(title: "用户名（访客访问可留空）", placeholder: "例如：admin", text: $username)
                                         secureInputField(title: "密码（访客访问可留空）", placeholder: "输入密码", text: $password)
                                     }
@@ -848,20 +863,23 @@ struct AddMediaSourceView: View {
                             }
                             .buttonStyle(AetherPillButtonStyle(accent: .white, cornerRadius: 18, horizontalPadding: 26, verticalPadding: 17))
                         }
-                        .padding(.bottom, 40)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 48)
                     }
-                    .padding(.horizontal, 64)
-                    .padding(.vertical, 36)
+                    .frame(maxWidth: 1460)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 72)
+                    .padding(.vertical, 44)
                 }
             }
-            .sheet(isPresented: $showQRConfigSheet) {
+            .fullScreenCover(isPresented: $showQRConfigSheet) {
                 QuickConfigQRView { imported in
                     applyConfig(imported)
                     testMessage = "已通过手机扫码填入配置，请检查或测试后保存"
                     testSucceeded = true
                 }
             }
-            .sheet(isPresented: $showLANDiscoverySheet) {
+            .fullScreenCover(isPresented: $showLANDiscoverySheet) {
                 LANDiscoverySheetView { service in
                     applyDiscoveredService(service)
                     testMessage = "已填入发现的设备「\(service.name)」，请补充认证信息或测试连接"

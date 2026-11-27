@@ -212,7 +212,7 @@ private struct AetherPillButtonBody: View {
                     .strokeBorder(borderColor, lineWidth: isFocused ? 2 : (isSelected ? 1.5 : 1))
             )
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .scaleEffect(configuration.isPressed ? 0.97 : (isFocused ? 1.06 : 1.0))
+            .scaleEffect(configuration.isPressed ? 0.97 : (isFocused ? 1.045 : 1.0))
             .shadow(
                 color: isFocused ? accent.opacity(0.45) : Color.black.opacity(0.25),
                 radius: isFocused ? 22 : 8,
@@ -332,7 +332,7 @@ private struct AetherSpotlightCardBody: View {
                     )
             )
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .scaleEffect(configuration.isPressed ? 0.98 : (isFocused ? 1.045 : 1.0))
+            .scaleEffect(configuration.isPressed ? 0.98 : (isFocused ? 1.03 : 1.0))
             .shadow(
                 color: isFocused ? accent.opacity(0.46) : Color.black.opacity(0.34),
                 radius: isFocused ? 28 : 12,
@@ -382,7 +382,7 @@ private struct AetherPosterCardBody: View {
                         lineWidth: isFocused ? 3 : 1
                     )
             )
-            .scaleEffect(configuration.isPressed ? 0.97 : (isFocused ? 1.06 : 1.0))
+            .scaleEffect(configuration.isPressed ? 0.97 : (isFocused ? 1.045 : 1.0))
             .shadow(
                 color: isFocused ? accent.opacity(0.48) : Color.black.opacity(0.45),
                 radius: isFocused ? 30 : 12,

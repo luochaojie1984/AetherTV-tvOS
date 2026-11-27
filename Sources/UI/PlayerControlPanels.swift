@@ -27,21 +27,27 @@ enum PlayerPanelTab: String, CaseIterable, Identifiable {
     }
 }
 
-/// 苹果原生毛玻璃风格播放器快捷控制面板（按下方向键唤出；全部控件焦点感知，绝不出现白底白字）
+/// 苹果原生 Liquid Glass 风格播放器快捷控制面板（按下方向键唤出；显式 FocusState + focusSection 保证遥控器顺畅选择字幕等选项，且不超出画面边界）
 struct PlayerControlPanels: View {
+    private enum PanelFocus: Hashable {
+        case tab(PlayerPanelTab)
+        case done
+    }
+
     @ObservedObject var controller: PlaybackController
     @ObservedObject var engine: AetherEngine
     @ObservedObject var settings: PlayerSettingsStore
     let onDismiss: () -> Void
 
     @State private var selectedTab: PlayerPanelTab = .subtitles
+    @FocusState private var focusedItem: PanelFocus?
 
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
 
-            VStack(spacing: 22) {
-                // 顶部苹果风格分段标签栏
+            VStack(spacing: 20) {
+                // 顶部苹果风格分段标签栏（独立 focusSection，按下方向键直达下方选项）
                 HStack(spacing: 16) {
                     ForEach(PlayerPanelTab.allCases) { tab in
                         Button {
@@ -60,6 +66,7 @@ struct PlayerControlPanels: View {
                             horizontalPadding: 24,
                             verticalPadding: 12
                         ))
+                        .focused($focusedItem, equals: .tab(tab))
                     }
 
                     Spacer()
@@ -77,30 +84,41 @@ struct PlayerControlPanels: View {
                         horizontalPadding: 22,
                         verticalPadding: 12
                     ))
+                    .focused($focusedItem, equals: .done)
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .focusSection()
 
-                Divider().overlay(Color.white.opacity(0.18))
+                Divider().overlay(Color.white.opacity(0.20))
 
                 ScrollView(.vertical, showsIndicators: false) {
-                    switch selectedTab {
-                    case .subtitles:
-                        subtitleTabContent
-                    case .audio:
-                        audioTabContent
-                    case .video:
-                        videoTabContent
-                    case .chapters:
-                        chaptersAndToolsTabContent
+                    Group {
+                        switch selectedTab {
+                        case .subtitles:
+                            subtitleTabContent
+                        case .audio:
+                            audioTabContent
+                        case .video:
+                            videoTabContent
+                        case .chapters:
+                            chaptersAndToolsTabContent
+                        }
                     }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
                 }
-                .frame(height: 440)
+                .frame(maxHeight: 420)
+                .focusSection()
             }
-            .padding(34)
+            .padding(28)
             .background(
                 ZStack {
-                    RoundedRectangle(cornerRadius: 30, style: .continuous)
-                        .fill(Color(red: 0.06, green: 0.08, blue: 0.14).opacity(0.92))
-                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                    RoundedRectangle(cornerRadius: 32, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: 32, style: .continuous)
+                        .fill(Color(red: 0.05, green: 0.07, blue: 0.13).opacity(0.62))
+                    RoundedRectangle(cornerRadius: 32, style: .continuous)
                         .fill(
                             LinearGradient(
                                 colors: [selectedTab.accent.opacity(0.14), Color.clear],
@@ -111,23 +129,27 @@ struct PlayerControlPanels: View {
                 }
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 30, style: .continuous)
+                RoundedRectangle(cornerRadius: 32, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
-                            colors: [Color.white.opacity(0.28), selectedTab.accent.opacity(0.22)],
+                            colors: [Color.white.opacity(0.42), selectedTab.accent.opacity(0.22), Color.white.opacity(0.10)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 1.2
+                        lineWidth: 1.3
                     )
             )
-            .shadow(color: Color.black.opacity(0.75), radius: 40, x: 0, y: 18)
-            .padding(.horizontal, 60)
-            .padding(.bottom, 34)
+            .shadow(color: Color.black.opacity(0.65), radius: 36, x: 0, y: 16)
+            .padding(.horizontal, 56)
+            .padding(.bottom, 22)
         }
-        .background(Color.black.opacity(0.45).ignoresSafeArea())
+        .background(Color.black.opacity(0.42).ignoresSafeArea())
         .onAppear {
             AppleTVSoundEffects.playPanelOpen()
+            // 主动将遥控器焦点引导至当前面板标签栏，确保从播放器按确定/下键进入后可立即左右上下选择字幕与音轨
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                focusedItem = .tab(selectedTab)
+            }
         }
     }
 

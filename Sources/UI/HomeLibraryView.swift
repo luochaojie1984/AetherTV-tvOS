@@ -152,22 +152,22 @@ struct HomeLibraryView: View {
                 let cfg = sourceStore.sources.first { $0.id == item.sourceId }
                 PlayerScreenView(item: item, playlist: playingList, sourceConfig: cfg)
             }
-            .sheet(item: $quickAddProtocol) { proto in
+            .fullScreenCover(item: $quickAddProtocol) { proto in
                 AddMediaSourceView(initialProtocol: proto) { newSource in
                     sourceStore.add(newSource)
                 }
             }
-            .sheet(item: $prefillServiceForAdd) { service in
+            .fullScreenCover(item: $prefillServiceForAdd) { service in
                 AddMediaSourceView(discoveredService: service) { newSource in
                     sourceStore.add(newSource)
                 }
             }
-            .sheet(isPresented: $showQRConfigSheet) {
+            .fullScreenCover(isPresented: $showQRConfigSheet) {
                 QuickConfigQRView { imported in
                     sourceStore.add(imported)
                 }
             }
-            .sheet(isPresented: $showLANDiscoverySheet) {
+            .fullScreenCover(isPresented: $showLANDiscoverySheet) {
                 LANDiscoverySheetView { service in
                     prefillServiceForAdd = service
                 }

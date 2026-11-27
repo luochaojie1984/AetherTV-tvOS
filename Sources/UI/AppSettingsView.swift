@@ -98,10 +98,10 @@ struct AppSettingsView: View {
                                 ))
                             }
                         }
-                        .padding(.vertical, 28)
-                        .padding(.horizontal, 12)
+                        .padding(.vertical, 32)
+                        .padding(.horizontal, 22)
                     }
-                    .frame(width: 470)
+                    .frame(width: 490)
 
                     // 右侧：高对比度玻璃设置卡片区
                     ScrollView(.vertical, showsIndicators: false) {
@@ -134,8 +134,8 @@ struct AppSettingsView: View {
                                 diagnosticsSection
                             }
                         }
-                        .padding(.vertical, 28)
-                        .padding(.horizontal, 16)
+                        .padding(.vertical, 32)
+                        .padding(.horizontal, 24)
                     }
                     .frame(maxWidth: .infinity)
                 }
