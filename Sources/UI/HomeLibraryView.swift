@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeLibraryView: View {
     var onOpenSourcesTab: () -> Void = {}
+    var onOpenSource: (MediaSourceConfig) -> Void = { _ in }
 
     @EnvironmentObject private var historyStore: WatchHistoryStore
     @EnvironmentObject private var sourceStore: MediaSourceStore
@@ -9,6 +10,7 @@ struct HomeLibraryView: View {
     @State private var playingItem: MediaItem?
     @State private var playingList: [MediaItem] = []
     @State private var quickAddProtocol: MediaProtocolType?
+    @State private var editingSource: MediaSourceConfig?
     @State private var showQRConfigSheet = false
     @State private var showLANDiscoverySheet = false
     @State private var prefillServiceForAdd: DiscoveredLANService?
@@ -18,159 +20,168 @@ struct HomeLibraryView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                AetherAmbientBackdrop(accent: heroEntry?.item.protocolType.accentColor ?? Color(red: 0.20, green: 0.72, blue: 1.0))
+        ZStack {
+            AetherAmbientBackdrop(accent: heroEntry?.item.protocolType.accentColor ?? Color(red: 0.20, green: 0.72, blue: 1.0))
 
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 46) {
-                        // 1. 影院级 Hero 主舞台（有观看记录则展示大片续播舞台，无记录则展示沉浸式功能快捷入口，不再堆砌无意义纯文字）
-                        if let entry = heroEntry {
-                            featuredPlaybackHero(entry: entry)
-                                .padding(.horizontal, 60)
-                                .padding(.top, 24)
-                        } else {
-                            cinematicLauncherHero
-                                .padding(.horizontal, 60)
-                                .padding(.top, 24)
-                        }
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 46) {
+                    // 1. 影院级 Hero 主舞台（有观看记录则展示大片续播舞台，无记录则展示沉浸式功能快捷入口，不再堆砌无意义纯文字）
+                    if let entry = heroEntry {
+                        featuredPlaybackHero(entry: entry)
+                            .padding(.horizontal, 60)
+                            .padding(.top, 24)
+                    } else {
+                        cinematicLauncherHero
+                            .padding(.horizontal, 60)
+                            .padding(.top, 24)
+                    }
 
-                        // 2. 已添加的媒体源（精美图标卡片横排，直接一键浏览）
-                        if !sourceStore.sources.isEmpty {
-                            VStack(alignment: .leading, spacing: 18) {
-                                AetherSectionHeader(
-                                    title: "我的媒体源",
-                                    subtitle: "\(sourceStore.sources.count) 个已连接",
-                                    icon: "server.rack"
-                                )
-                                .padding(.horizontal, 60)
+                    // 2. 已添加的媒体源（精美图标卡片横排，直接一键浏览，长按可编辑或删除）
+                    if !sourceStore.sources.isEmpty {
+                        VStack(alignment: .leading, spacing: 18) {
+                            AetherSectionHeader(
+                                title: "我的媒体源",
+                                subtitle: "\(sourceStore.sources.count) 个已连接 · 长按可编辑",
+                                icon: "server.rack"
+                            )
+                            .padding(.horizontal, 60)
 
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    LazyHStack(spacing: 28) {
-                                        ForEach(sourceStore.sources) { source in
-                                            NavigationLink {
-                                                SourceDirectoryView(
-                                                    source: source,
-                                                    currentPath: source.protocolType == .dlna ? "0" : "/"
-                                                )
-                                            } label: {
-                                                HomeSourceCardContent(source: source)
-                                            }
-                                            .buttonStyle(AetherSpotlightCardStyle(accent: source.protocolType.accentColor, cornerRadius: 22))
-                                        }
-
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHStack(spacing: 28) {
+                                    ForEach(sourceStore.sources) { source in
                                         Button {
                                             AppleTVSoundEffects.playSelect()
-                                            quickAddProtocol = .smb
+                                            onOpenSource(source)
                                         } label: {
-                                            VStack(spacing: 12) {
-                                                AetherIconMedallion(
-                                                    systemName: "plus",
-                                                    colors: [Color(red: 0.20, green: 0.54, blue: 0.96), Color(red: 0.14, green: 0.80, blue: 0.96)],
-                                                    size: 54
-                                                )
-                                                Text("添加媒体源")
-                                                    .font(.system(size: 20, weight: .semibold))
-                                                    .foregroundStyle(Color.white)
-                                            }
-                                            .frame(width: 210, height: 152)
+                                            HomeSourceCardContent(source: source)
                                         }
-                                        .buttonStyle(AetherSpotlightCardStyle(accent: .cyan, cornerRadius: 22))
+                                        .buttonStyle(AetherSpotlightCardStyle(accent: source.protocolType.accentColor, cornerRadius: 22))
+                                        .contextMenu {
+                                            Button("编辑此媒体源") {
+                                                editingSource = source
+                                            }
+                                            Button("删除此媒体源", role: .destructive) {
+                                                sourceStore.remove(id: source.id)
+                                            }
+                                        }
                                     }
-                                    .padding(.horizontal, 60)
-                                    .padding(.vertical, 18)
-                                }
-                            }
-                        }
 
-                        // 3. 继续观看（Apple TV Up Next 宽屏影院卡片）
-                        if !historyStore.continueWatching.isEmpty {
-                            VStack(alignment: .leading, spacing: 16) {
-                                AetherSectionHeader(
-                                    title: "继续观看",
-                                    subtitle: "无缝续播上次进度",
-                                    icon: "play.circle.fill"
-                                )
+                                    Button {
+                                        AppleTVSoundEffects.playSelect()
+                                        quickAddProtocol = .smb
+                                    } label: {
+                                        VStack(spacing: 12) {
+                                            AetherIconMedallion(
+                                                systemName: "plus",
+                                                colors: [Color(red: 0.20, green: 0.54, blue: 0.96), Color(red: 0.14, green: 0.80, blue: 0.96)],
+                                                size: 54
+                                            )
+                                            Text("添加媒体源")
+                                                .font(.system(size: 20, weight: .semibold))
+                                                .foregroundStyle(Color.white)
+                                        }
+                                        .frame(width: 210, height: 152)
+                                    }
+                                    .buttonStyle(AetherSpotlightCardStyle(accent: .cyan, cornerRadius: 22))
+                                }
                                 .padding(.horizontal, 60)
-
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    LazyHStack(spacing: 34) {
-                                        ForEach(historyStore.continueWatching) { entry in
-                                            Button {
-                                                AppleTVSoundEffects.playSelect()
-                                                playingList = historyStore.continueWatching.map(\.item)
-                                                playingItem = entry.item
-                                            } label: {
-                                                MediaPosterCard(item: entry.item, progress: entry.progress)
-                                            }
-                                            .buttonStyle(AetherPosterCardStyle(accent: entry.item.protocolType.accentColor))
-                                            .contextMenu {
-                                                Button("清除续播进度", role: .destructive) {
-                                                    historyStore.clearProgress(for: entry.id)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    .padding(.horizontal, 60)
-                                    .padding(.vertical, 22)
-                                }
-                            }
-                        }
-
-                        // 4. 最近观看
-                        if !historyStore.history.isEmpty {
-                            VStack(alignment: .leading, spacing: 16) {
-                                AetherSectionHeader(
-                                    title: "最近观看",
-                                    icon: "clock.arrow.circlepath"
-                                )
-                                .padding(.horizontal, 60)
-
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    LazyHStack(spacing: 34) {
-                                        ForEach(historyStore.history.prefix(15)) { entry in
-                                            Button {
-                                                AppleTVSoundEffects.playSelect()
-                                                playingList = historyStore.history.map(\.item)
-                                                playingItem = entry.item
-                                            } label: {
-                                                MediaPosterCard(item: entry.item, progress: entry.progress)
-                                            }
-                                            .buttonStyle(AetherPosterCardStyle(accent: entry.item.protocolType.accentColor))
-                                        }
-                                    }
-                                    .padding(.horizontal, 60)
-                                    .padding(.vertical, 22)
-                                }
+                                .padding(.vertical, 18)
                             }
                         }
                     }
-                    .padding(.bottom, 70)
+
+                    // 3. 继续观看（Apple TV Up Next 宽屏影院卡片）
+                    if !historyStore.continueWatching.isEmpty {
+                        VStack(alignment: .leading, spacing: 16) {
+                            AetherSectionHeader(
+                                title: "继续观看",
+                                subtitle: "无缝续播上次进度",
+                                icon: "play.circle.fill"
+                            )
+                            .padding(.horizontal, 60)
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHStack(spacing: 34) {
+                                    ForEach(historyStore.continueWatching) { entry in
+                                        Button {
+                                            AppleTVSoundEffects.playSelect()
+                                            playingList = historyStore.continueWatching.map(\.item)
+                                            playingItem = entry.item
+                                        } label: {
+                                            MediaPosterCard(item: entry.item, progress: entry.progress)
+                                        }
+                                        .buttonStyle(AetherPosterCardStyle(accent: entry.item.protocolType.accentColor))
+                                        .contextMenu {
+                                            Button("清除续播进度", role: .destructive) {
+                                                historyStore.clearProgress(for: entry.id)
+                                            }
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 60)
+                                .padding(.vertical, 22)
+                            }
+                        }
+                    }
+
+                    // 4. 最近观看
+                    if !historyStore.history.isEmpty {
+                        VStack(alignment: .leading, spacing: 16) {
+                            AetherSectionHeader(
+                                title: "最近观看",
+                                icon: "clock.arrow.circlepath"
+                            )
+                            .padding(.horizontal, 60)
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHStack(spacing: 34) {
+                                    ForEach(historyStore.history.prefix(15)) { entry in
+                                        Button {
+                                            AppleTVSoundEffects.playSelect()
+                                            playingList = historyStore.history.map(\.item)
+                                            playingItem = entry.item
+                                        } label: {
+                                            MediaPosterCard(item: entry.item, progress: entry.progress)
+                                        }
+                                        .buttonStyle(AetherPosterCardStyle(accent: entry.item.protocolType.accentColor))
+                                    }
+                                }
+                                .padding(.horizontal, 60)
+                                .padding(.vertical, 22)
+                            }
+                        }
+                    }
                 }
+                .padding(.bottom, 70)
             }
-            .fullScreenCover(item: $playingItem) { item in
-                let cfg = sourceStore.sources.first { $0.id == item.sourceId }
-                PlayerScreenView(item: item, playlist: playingList, sourceConfig: cfg)
+        }
+        .fullScreenCover(item: $playingItem) { item in
+            let cfg = sourceStore.sources.first { $0.id == item.sourceId }
+            PlayerScreenView(item: item, playlist: playingList, sourceConfig: cfg)
+        }
+        .fullScreenCover(item: $quickAddProtocol) { proto in
+            AddMediaSourceView(initialProtocol: proto) { newSource in
+                sourceStore.add(newSource)
             }
-            .fullScreenCover(item: $quickAddProtocol) { proto in
-                AddMediaSourceView(initialProtocol: proto) { newSource in
-                    sourceStore.add(newSource)
-                }
+        }
+        .fullScreenCover(item: $editingSource) { source in
+            AddMediaSourceView(editing: source) { updated in
+                sourceStore.update(updated)
             }
-            .fullScreenCover(item: $prefillServiceForAdd) { service in
-                AddMediaSourceView(discoveredService: service) { newSource in
-                    sourceStore.add(newSource)
-                }
+        }
+        .fullScreenCover(item: $prefillServiceForAdd) { service in
+            AddMediaSourceView(discoveredService: service) { newSource in
+                sourceStore.add(newSource)
             }
-            .fullScreenCover(isPresented: $showQRConfigSheet) {
-                QuickConfigQRView { imported in
-                    sourceStore.add(imported)
-                }
+        }
+        .fullScreenCover(isPresented: $showQRConfigSheet) {
+            QuickConfigQRView { imported in
+                sourceStore.add(imported)
             }
-            .fullScreenCover(isPresented: $showLANDiscoverySheet) {
-                LANDiscoverySheetView { service in
-                    prefillServiceForAdd = service
-                }
+        }
+        .fullScreenCover(isPresented: $showLANDiscoverySheet) {
+            LANDiscoverySheetView { service in
+                prefillServiceForAdd = service
             }
         }
     }

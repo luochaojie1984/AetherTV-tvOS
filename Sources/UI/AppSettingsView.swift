@@ -52,95 +52,93 @@ struct AppSettingsView: View {
     private let bufferChoices = Array(stride(from: 4, through: 40, by: 4))
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                AetherAmbientBackdrop(accent: selectedCategory.colors.first ?? .cyan)
+        ZStack {
+            AetherAmbientBackdrop(accent: selectedCategory.colors.first ?? .cyan)
 
-                HStack(alignment: .top, spacing: 42) {
-                    // 左侧：图标化分类侧边栏（杜绝原生 Form 聚焦白底白字）
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 18) {
-                            AetherSectionHeader(title: "设置", icon: "gearshape.fill")
-                                .padding(.bottom, 8)
-
-                            ForEach(SettingsCategory.allCases) { cat in
-                                Button {
-                                    AppleTVSoundEffects.playSelect()
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        selectedCategory = cat
-                                    }
-                                } label: {
-                                    HStack(spacing: 18) {
-                                        AetherIconMedallion(systemName: cat.icon, colors: cat.colors, size: 52)
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(cat.rawValue)
-                                                .font(.system(size: 24, weight: .semibold))
-                                                .foregroundStyle(Color.white)
-                                            Text(cat.subtitle)
-                                                .font(.system(size: 16))
-                                                .foregroundStyle(Color.white.opacity(0.60))
-                                                .lineLimit(1)
-                                        }
-                                        Spacer()
-                                        if selectedCategory == cat {
-                                            Image(systemName: "chevron.right")
-                                                .font(.system(size: 18, weight: .bold))
-                                                .foregroundStyle(cat.colors.first ?? Color.cyan)
-                                        }
-                                    }
-                                    .padding(.horizontal, 20)
-                                    .padding(.vertical, 16)
-                                }
-                                .buttonStyle(AetherSpotlightCardStyle(
-                                    accent: cat.colors.first ?? .cyan,
-                                    isSelected: selectedCategory == cat,
-                                    cornerRadius: 20
-                                ))
-                            }
-                        }
-                        .padding(.vertical, 32)
-                        .padding(.horizontal, 22)
-                    }
-                    .frame(width: 490)
-
-                    // 右侧：高对比度玻璃设置卡片区
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 20) {
-                            HStack(spacing: 16) {
-                                AetherIconMedallion(systemName: selectedCategory.icon, colors: selectedCategory.colors, size: 58)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(selectedCategory.rawValue)
-                                        .font(.system(size: 36, weight: .bold))
-                                        .foregroundStyle(Color.white)
-                                    Text(selectedCategory.subtitle)
-                                        .font(.system(size: 20))
-                                        .foregroundStyle(Color.white.opacity(0.62))
-                                }
-                            }
+            HStack(alignment: .top, spacing: 42) {
+                // 左侧：图标化分类侧边栏（杜绝原生 Form 聚焦白底白字）
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        AetherSectionHeader(title: "设置", icon: "gearshape.fill")
                             .padding(.bottom, 8)
 
-                            switch selectedCategory {
-                            case .video:
-                                videoSection
-                            case .audio:
-                                audioSection
-                            case .subtitles:
-                                subtitleSection
-                            case .playback:
-                                playbackSection
-                            case .network:
-                                networkSection
-                            case .diagnostics:
-                                diagnosticsSection
+                        ForEach(SettingsCategory.allCases) { cat in
+                            Button {
+                                AppleTVSoundEffects.playSelect()
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    selectedCategory = cat
+                                }
+                            } label: {
+                                HStack(spacing: 18) {
+                                    AetherIconMedallion(systemName: cat.icon, colors: cat.colors, size: 52)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(cat.rawValue)
+                                            .font(.system(size: 24, weight: .semibold))
+                                            .foregroundStyle(Color.white)
+                                        Text(cat.subtitle)
+                                            .font(.system(size: 16))
+                                            .foregroundStyle(Color.white.opacity(0.60))
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                    if selectedCategory == cat {
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 18, weight: .bold))
+                                            .foregroundStyle(cat.colors.first ?? Color.cyan)
+                                    }
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 16)
+                            }
+                            .buttonStyle(AetherSpotlightCardStyle(
+                                accent: cat.colors.first ?? .cyan,
+                                isSelected: selectedCategory == cat,
+                                cornerRadius: 20
+                            ))
+                        }
+                    }
+                    .padding(.vertical, 32)
+                    .padding(.horizontal, 22)
+                }
+                .frame(width: 490)
+
+                // 右侧：高对比度玻璃设置卡片区
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 20) {
+                        HStack(spacing: 16) {
+                            AetherIconMedallion(systemName: selectedCategory.icon, colors: selectedCategory.colors, size: 58)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(selectedCategory.rawValue)
+                                    .font(.system(size: 36, weight: .bold))
+                                    .foregroundStyle(Color.white)
+                                Text(selectedCategory.subtitle)
+                                    .font(.system(size: 20))
+                                    .foregroundStyle(Color.white.opacity(0.62))
                             }
                         }
-                        .padding(.vertical, 32)
-                        .padding(.horizontal, 24)
+                        .padding(.bottom, 8)
+
+                        switch selectedCategory {
+                        case .video:
+                            videoSection
+                        case .audio:
+                            audioSection
+                        case .subtitles:
+                            subtitleSection
+                        case .playback:
+                            playbackSection
+                        case .network:
+                            networkSection
+                        case .diagnostics:
+                            diagnosticsSection
+                        }
                     }
-                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 32)
+                    .padding(.horizontal, 24)
                 }
-                .padding(.horizontal, 52)
+                .frame(maxWidth: .infinity)
             }
+            .padding(.horizontal, 52)
         }
     }
 

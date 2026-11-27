@@ -6,6 +6,10 @@ import SMBClient
 enum SMBClientError: LocalizedError {
     case missingShareName
     case invalidURL
+    case timedOut(host: String, port: Int)
+    case logonFailed(hasCredentials: Bool)
+    case shareNotFound(share: String)
+    case shareEnumerationDenied(detail: String)
     case connectionFailed(String)
 
     var errorDescription: String? {
@@ -13,10 +17,56 @@ enum SMBClientError: LocalizedError {
         case .missingShareName:
             return "请先在 SMB 媒体源配置中填写共享文件夹名称（Share Name），或从服务器共享列表进入。"
         case .invalidURL:
-            return "SMB 地址无效，请检查服务器地址与端口。"
+            return "SMB 地址无效，请检查服务器 IP / 主机名与端口。"
+        case .timedOut(let host, let port):
+            return "连接 SMB 服务器 \(host):\(port) 超时（15 秒）。请检查 IP 与端口、电视与 NAS 是否在同一局域网，以及 Apple TV「设置 → 隐私 → 本地网络」权限是否已允许。"
+        case .logonFailed(let hasCredentials):
+            if hasCredentials {
+                return "SMB 登录认证失败（Logon Failure）。请点击「编辑媒体源」核对用户名与密码（若 NAS 要求域账号可填 域\\用户名）。"
+            }
+            return "SMB 访客登录被服务器拒绝（Logon Failure）。请点击「编辑媒体源」填写 NAS 的 SMB 用户名与密码。"
+        case .shareNotFound(let share):
+            return "找不到 SMB 共享文件夹「\(share)」（Bad Network Name）。请点击「编辑媒体源」检查共享名拼写，或留空共享名以自动列出全部共享。"
+        case .shareEnumerationDenied(let detail):
+            return "服务器拒绝自动列出共享目录（\(detail)）。请点击「编辑媒体源」核对账号密码，或在「SMB 共享文件夹名」中直接填写共享名（例如 media / video）。"
         case .connectionFailed(let msg):
             return "SMB 连接失败：\(msg)。提示：AetherEngineSMB 使用 SMB 2.0.2/2.1（NTLMv2/访客），请在 NAS 中允许 SMB2，且不要强制开启 SMB3 加密或签名。"
         }
+    }
+}
+
+private final class SMBAtomicFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+
+    func set() {
+        lock.lock()
+        flag = true
+        lock.unlock()
+    }
+
+    func get() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return flag
+    }
+}
+
+private final class SMBActiveClientBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: SMBClient?
+
+    func set(_ client: SMBClient?) {
+        lock.lock()
+        current = client
+        lock.unlock()
+    }
+
+    func disconnectCurrent() {
+        lock.lock()
+        let client = current
+        lock.unlock()
+        client?.session.disconnect()
     }
 }
 
@@ -278,43 +328,146 @@ final class SMBSourceClient: Sendable {
         )
     }
 
-    /// 登录 →（可选）连接共享 → 执行操作 → 断开。登录策略与 AetherEngineSMB 的 `SMBConnection.connect` 一致：
-    /// 未填用户名时先按访客登录，被拒后再退到完全匿名的 NTLM 会话；填了用户名则登录失败即报错，不降级。
+    /// 登录 →（可选）连接共享 → 执行操作 → 断开。
+    /// - 未填用户名时先按访客登录，被拒后断开连接并用全新 SMBClient 退回完全匿名会话（避免在同一连接上二次 negotiate 被 NAS 直接踢断）；
+    /// - 填了用户名支持 `域\用户名` 格式，登录失败即报错，不静默降级；
+    /// - 全程带 15 秒连接/操作超时保护与 Task 取消即刻断连，杜绝不可达主机导致界面假死。
     private func withSession<T>(
         for source: MediaSourceConfig,
         share: String?,
+        timeoutSeconds: UInt64 = 15,
         _ body: (SMBClient) async throws -> T
     ) async throws -> T {
         let target = try endpoint(for: source)
-        let client = (target.port > 0 && target.port != 445)
-            ? SMBClient(host: target.host, port: target.port)
-            : SMBClient(host: target.host)
-        let account = target.username.isEmpty ? nil : target.username
+        let effectivePort = target.port > 0 ? target.port : 445
+        let (parsedDomain, parsedUser) = Self.parseCredentials(username: target.username)
         let secret = target.password.isEmpty ? nil : target.password
 
-        let result: T
-        do {
-            do {
-                try await client.login(username: account ?? "guest", password: secret, domain: nil)
-            } catch where account == nil {
-                try await client.login(username: nil, password: nil)
-            }
-            if let share, !share.isEmpty {
-                try await client.connectShare(share)
-            }
-            result = try await body(client)
-        } catch {
-            client.session.disconnect()
-            throw SMBClientError.connectionFailed(error.localizedDescription)
+        let didTimeout = SMBAtomicFlag()
+        let activeClient = SMBActiveClientBox()
+
+        let timeoutTask = Task {
+            try? await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            didTimeout.set()
+            activeClient.disconnectCurrent()
+        }
+        defer {
+            timeoutTask.cancel()
         }
 
-        if let share, !share.isEmpty {
-            _ = try? await client.disconnectShare()
+        return try await withTaskCancellationHandler {
+            let client: SMBClient
+            do {
+                if let user = parsedUser {
+                    let c = Self.makeClient(host: target.host, port: effectivePort)
+                    activeClient.set(c)
+                    try await c.login(username: user, password: secret, domain: parsedDomain)
+                    client = c
+                } else {
+                    let guestClient = Self.makeClient(host: target.host, port: effectivePort)
+                    activeClient.set(guestClient)
+                    do {
+                        try await guestClient.login(username: "guest", password: nil, domain: nil)
+                        client = guestClient
+                    } catch {
+                        guestClient.session.disconnect()
+                        if Task.isCancelled { throw CancellationError() }
+                        if didTimeout.get() {
+                            throw SMBClientError.timedOut(host: target.host, port: effectivePort)
+                        }
+                        // 必须新建连接再尝试完全匿名登录；复旧连接二次 negotiate 违反 SMB2 协议必然失败
+                        let anonClient = Self.makeClient(host: target.host, port: effectivePort)
+                        activeClient.set(anonClient)
+                        try await anonClient.login(username: nil, password: nil, domain: nil)
+                        client = anonClient
+                    }
+                }
+
+                if let share, !share.isEmpty {
+                    try await client.connectShare(share)
+                }
+
+                let result = try await body(client)
+
+                if let share, !share.isEmpty {
+                    _ = try? await client.disconnectShare()
+                }
+                _ = try? await client.logoff()
+                // logoff() 只结束 SMB 会话，底层 TCP 连接要一并断开，否则 socket 会挂到对象释放
+                client.session.disconnect()
+                activeClient.set(nil)
+                return result
+            } catch is CancellationError {
+                activeClient.disconnectCurrent()
+                activeClient.set(nil)
+                throw CancellationError()
+            } catch let smbError as SMBClientError {
+                activeClient.disconnectCurrent()
+                activeClient.set(nil)
+                throw smbError
+            } catch {
+                activeClient.disconnectCurrent()
+                activeClient.set(nil)
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+                if didTimeout.get() {
+                    throw SMBClientError.timedOut(host: target.host, port: effectivePort)
+                }
+                throw Self.mapError(
+                    error,
+                    share: share,
+                    hasCredentials: parsedUser != nil
+                )
+            }
+        } onCancel: {
+            activeClient.disconnectCurrent()
         }
-        _ = try? await client.logoff()
-        // logoff() 只结束 SMB 会话，底层 TCP 连接要一并断开，否则 socket 会挂到对象释放
-        client.session.disconnect()
-        return result
+    }
+
+    private static func makeClient(host: String, port: Int) -> SMBClient {
+        (port > 0 && port != 445) ? SMBClient(host: host, port: port) : SMBClient(host: host)
+    }
+
+    private static func parseCredentials(username: String) -> (domain: String?, user: String?) {
+        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return (nil, nil) }
+        if let slash = trimmed.firstIndex(of: "\\") {
+            let domain = String(trimmed[..<slash]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let user = String(trimmed[trimmed.index(after: slash)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !user.isEmpty {
+                return (domain.isEmpty ? nil : domain, user)
+            }
+        }
+        return (nil, trimmed)
+    }
+
+    private static func mapError(_ error: Error, share: String?, hasCredentials: Bool) -> SMBClientError {
+        if let response = error as? ErrorResponse {
+            let status = response.header.status
+            let detail = response.errorDescription ?? response.description
+            switch status {
+            case 0xC000006D: // STATUS_LOGON_FAILURE
+                return .logonFailed(hasCredentials: hasCredentials)
+            case 0xC00000CC: // STATUS_BAD_NETWORK_NAME
+                if let share, !share.isEmpty {
+                    return .shareNotFound(share: share)
+                }
+                return .shareEnumerationDenied(detail: detail)
+            case 0xC0000022, // STATUS_ACCESS_DENIED
+                 0xC00000BB, // STATUS_NOT_SUPPORTED
+                 0xC0000034, // STATUS_OBJECT_NAME_NOT_FOUND
+                 0xC0000002: // STATUS_NOT_IMPLEMENTED
+                if share == nil || share?.isEmpty == true {
+                    return .shareEnumerationDenied(detail: detail)
+                }
+                return .connectionFailed("访问被拒绝（\(detail)），请检查账号对该共享目录的读取权限")
+            default:
+                return .connectionFailed(detail)
+            }
+        }
+        return .connectionFailed(error.localizedDescription)
     }
 
     /// "." / ".."、以 "." 开头的隐藏项，以及群晖的 @eaDir / #recycle 等缩略图与回收站目录

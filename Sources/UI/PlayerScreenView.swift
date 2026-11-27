@@ -214,6 +214,11 @@ struct PlayerScreenView: View {
                 }
                 .padding(40)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .onExitCommand {
+                    AppleTVSoundEffects.playBack()
+                    controller.stopAndDismiss()
+                    dismiss()
+                }
             }
         }
         .task {

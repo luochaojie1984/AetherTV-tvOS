@@ -115,6 +115,18 @@ enum SmokeTestRunner {
                 .environmentObject(WatchHistoryStore.shared)
                 .environmentObject(PlayerSettingsStore.shared))
         }
+        await step("ui.directory") {
+            let route = SourceDirectoryRoute(
+                sourceId: webdav.id,
+                currentPath: "/",
+                displayTitle: nil,
+                fallbackSource: webdav
+            )
+            return try await showcase("目录浏览", SourceDirectoryView(route: route)
+                .environmentObject(MediaSourceStore.shared)
+                .environmentObject(WatchHistoryStore.shared)
+                .environmentObject(PlayerSettingsStore.shared))
+        }
 
         await step("unit.soundBundleAssets") {
             for cue in AppleTVSoundEffects.Cue.allCases {

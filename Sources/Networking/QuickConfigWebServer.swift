@@ -306,8 +306,8 @@ final class QuickConfigWebServer: ObservableObject {
               <label style="margin:0">启用 HTTPS</label>
             </div>
             <div id="shareWrap">
-              <label>SMB 共享名（如 media / share）</label>
-              <input id="shareName" placeholder="例如：media" />
+              <label>SMB 共享名（可留空，连接后自动列出全部共享）</label>
+              <input id="shareName" placeholder="留空自动列出全部共享，或填如 media" />
             </div>
             <div id="pathWrap" style="display:none">
               <label>基础路径 / DLNA Control 路径</label>

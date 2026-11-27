@@ -1,6 +1,16 @@
 import SwiftUI
 
+/// 统一目录导航路由，挂在 RootTabView 外层的唯一 NavigationStack 上，彻底解决 tvOS 返回键误退桌面与 Tab 卡死问题
+struct SourceDirectoryRoute: Hashable {
+    let sourceId: UUID
+    let currentPath: String
+    let displayTitle: String?
+    let fallbackSource: MediaSourceConfig
+}
+
 struct SourceBrowserView: View {
+    var onOpenSource: (MediaSourceConfig) -> Void = { _ in }
+
     @EnvironmentObject private var sourceStore: MediaSourceStore
     @State private var addingProtocol: MediaProtocolType?
     @State private var editingSource: MediaSourceConfig?
@@ -9,221 +19,217 @@ struct SourceBrowserView: View {
     @State private var showLANDiscoverySheet = false
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                AetherAmbientBackdrop(accent: Color(red: 0.16, green: 0.68, blue: 1.0))
+        ZStack {
+            AetherAmbientBackdrop(accent: Color(red: 0.16, green: 0.68, blue: 1.0))
 
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 44) {
-                        // 1. 顶部快捷添加方式（双大号图标卡：手机扫码 & 自动发现）
-                        VStack(alignment: .leading, spacing: 20) {
-                            AetherSectionHeader(
-                                title: "媒体源中心",
-                                subtitle: "支持手机扫码、自动发现与 7 大局域网协议",
-                                icon: "server.rack"
-                            )
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 44) {
+                    // 1. 顶部快捷添加方式（双大号图标卡：手机扫码 & 自动发现）
+                    VStack(alignment: .leading, spacing: 20) {
+                        AetherSectionHeader(
+                            title: "媒体源中心",
+                            subtitle: "支持手机扫码、自动发现与 7 大局域网协议",
+                            icon: "server.rack"
+                        )
 
-                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 28), GridItem(.flexible(), spacing: 28)], spacing: 28) {
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 28), GridItem(.flexible(), spacing: 28)], spacing: 28) {
+                            Button {
+                                AppleTVSoundEffects.playSelect()
+                                showQRConfigSheet = true
+                            } label: {
+                                HStack(spacing: 24) {
+                                    AetherIconMedallion(
+                                        systemName: "qrcode.viewfinder",
+                                        colors: [Color(red: 0.08, green: 0.60, blue: 0.68), Color(red: 0.22, green: 0.88, blue: 0.86)],
+                                        size: 76
+                                    )
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text("手机扫码 / 网页快速添加")
+                                            .font(.system(size: 27, weight: .bold))
+                                            .foregroundStyle(Color.white)
+                                        Text("无需遥控器打字，手机扫一扫即可填写 SMB、WebDAV、Emby、Plex 等配置")
+                                            .font(.system(size: 18))
+                                            .foregroundStyle(Color.white.opacity(0.68))
+                                            .lineLimit(2)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(28)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(AetherSpotlightCardStyle(accent: Color(red: 0.16, green: 0.86, blue: 0.84), cornerRadius: 24))
+
+                            Button {
+                                AppleTVSoundEffects.playSelect()
+                                showLANDiscoverySheet = true
+                            } label: {
+                                HStack(spacing: 24) {
+                                    AetherIconMedallion(
+                                        systemName: "dot.radiowaves.left.and.right",
+                                        colors: [Color(red: 0.48, green: 0.28, blue: 0.96), Color(red: 0.24, green: 0.72, blue: 1.0)],
+                                        size: 76
+                                    )
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text("自动扫描局域网设备")
+                                            .font(.system(size: 27, weight: .bold))
+                                            .foregroundStyle(Color.white)
+                                        Text("Bonjour + SSDP 自动发现内网 NAS、SMB 共享、WebDAV、Emby、Plex 与 DLNA")
+                                            .font(.system(size: 18))
+                                            .foregroundStyle(Color.white.opacity(0.68))
+                                            .lineLimit(2)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(28)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(AetherSpotlightCardStyle(accent: Color(red: 0.54, green: 0.42, blue: 1.0), cornerRadius: 24))
+                        }
+                    }
+
+                    // 2. 按协议图标添加（SMB 置于首位，大号渐变图标卡片，告别纯文字下拉列表）
+                    VStack(alignment: .leading, spacing: 20) {
+                        AetherSectionHeader(
+                            title: "选择协议添加媒体源",
+                            subtitle: "点按图标直接配置",
+                            icon: "plus.circle.fill"
+                        )
+
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 340, maximum: 420), spacing: 26)],
+                            spacing: 26
+                        ) {
+                            ForEach(MediaProtocolType.allCases) { proto in
                                 Button {
                                     AppleTVSoundEffects.playSelect()
-                                    showQRConfigSheet = true
+                                    addingProtocol = proto
                                 } label: {
-                                    HStack(spacing: 24) {
+                                    HStack(spacing: 20) {
                                         AetherIconMedallion(
-                                            systemName: "qrcode.viewfinder",
-                                            colors: [Color(red: 0.08, green: 0.60, blue: 0.68), Color(red: 0.22, green: 0.88, blue: 0.86)],
-                                            size: 76
+                                            systemName: proto.cardSymbolName,
+                                            colors: proto.gradientColors,
+                                            size: 64
                                         )
                                         VStack(alignment: .leading, spacing: 6) {
-                                            Text("手机扫码 / 网页快速添加")
-                                                .font(.system(size: 27, weight: .bold))
+                                            Text(proto.displayName)
+                                                .font(.system(size: 25, weight: .bold))
                                                 .foregroundStyle(Color.white)
-                                            Text("无需遥控器打字，手机扫一扫即可填写 SMB、WebDAV、Emby、Plex 等配置")
-                                                .font(.system(size: 18))
-                                                .foregroundStyle(Color.white.opacity(0.68))
+                                            Text(proto.shortTagline)
+                                                .font(.system(size: 17))
+                                                .foregroundStyle(Color.white.opacity(0.65))
                                                 .lineLimit(2)
                                         }
                                         Spacer(minLength: 0)
                                     }
-                                    .padding(28)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(22)
+                                    .frame(maxWidth: .infinity, minHeight: 118, alignment: .leading)
                                 }
-                                .buttonStyle(AetherSpotlightCardStyle(accent: Color(red: 0.16, green: 0.86, blue: 0.84), cornerRadius: 24))
-
-                                Button {
-                                    AppleTVSoundEffects.playSelect()
-                                    showLANDiscoverySheet = true
-                                } label: {
-                                    HStack(spacing: 24) {
-                                        AetherIconMedallion(
-                                            systemName: "dot.radiowaves.left.and.right",
-                                            colors: [Color(red: 0.48, green: 0.28, blue: 0.96), Color(red: 0.24, green: 0.72, blue: 1.0)],
-                                            size: 76
-                                        )
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            Text("自动扫描局域网设备")
-                                                .font(.system(size: 27, weight: .bold))
-                                                .foregroundStyle(Color.white)
-                                            Text("Bonjour + SSDP 自动发现内网 NAS、SMB 共享、WebDAV、Emby、Plex 与 DLNA")
-                                                .font(.system(size: 18))
-                                                .foregroundStyle(Color.white.opacity(0.68))
-                                                .lineLimit(2)
-                                        }
-                                        Spacer(minLength: 0)
-                                    }
-                                    .padding(28)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .buttonStyle(AetherSpotlightCardStyle(accent: Color(red: 0.54, green: 0.42, blue: 1.0), cornerRadius: 24))
+                                .buttonStyle(AetherSpotlightCardStyle(accent: proto.accentColor, cornerRadius: 22))
                             }
                         }
+                    }
 
-                        // 2. 按协议图标添加（SMB 置于首位，大号渐变图标卡片，告别纯文字下拉列表）
+                    // 3. 已保存的媒体源
+                    if !sourceStore.sources.isEmpty {
                         VStack(alignment: .leading, spacing: 20) {
                             AetherSectionHeader(
-                                title: "选择协议添加媒体源",
-                                subtitle: "点按图标直接配置",
-                                icon: "plus.circle.fill"
+                                title: "已保存的媒体源",
+                                subtitle: "长按确认键可编辑或删除",
+                                icon: "externaldrive.connected.to.line.below"
                             )
 
                             LazyVGrid(
-                                columns: [GridItem(.adaptive(minimum: 340, maximum: 420), spacing: 26)],
+                                columns: [GridItem(.adaptive(minimum: 460, maximum: 580), spacing: 28)],
                                 spacing: 26
                             ) {
-                                ForEach(MediaProtocolType.allCases) { proto in
+                                ForEach(sourceStore.sources) { source in
                                     Button {
                                         AppleTVSoundEffects.playSelect()
-                                        addingProtocol = proto
+                                        onOpenSource(source)
                                     } label: {
-                                        HStack(spacing: 20) {
+                                        HStack(spacing: 22) {
                                             AetherIconMedallion(
-                                                systemName: proto.cardSymbolName,
-                                                colors: proto.gradientColors,
-                                                size: 64
+                                                systemName: source.protocolType.cardSymbolName,
+                                                colors: source.protocolType.gradientColors,
+                                                size: 68
                                             )
                                             VStack(alignment: .leading, spacing: 6) {
-                                                Text(proto.displayName)
-                                                    .font(.system(size: 25, weight: .bold))
-                                                    .foregroundStyle(Color.white)
-                                                Text(proto.shortTagline)
-                                                    .font(.system(size: 17))
-                                                    .foregroundStyle(Color.white.opacity(0.65))
-                                                    .lineLimit(2)
-                                            }
-                                            Spacer(minLength: 0)
-                                        }
-                                        .padding(22)
-                                        .frame(maxWidth: .infinity, minHeight: 118, alignment: .leading)
-                                    }
-                                    .buttonStyle(AetherSpotlightCardStyle(accent: proto.accentColor, cornerRadius: 22))
-                                }
-                            }
-                        }
-
-                        // 3. 已保存的媒体源
-                        if !sourceStore.sources.isEmpty {
-                            VStack(alignment: .leading, spacing: 20) {
-                                AetherSectionHeader(
-                                    title: "已保存的媒体源",
-                                    subtitle: "长按确认键可编辑或删除",
-                                    icon: "externaldrive.connected.to.line.below"
-                                )
-
-                                LazyVGrid(
-                                    columns: [GridItem(.adaptive(minimum: 460, maximum: 580), spacing: 28)],
-                                    spacing: 26
-                                ) {
-                                    ForEach(sourceStore.sources) { source in
-                                        NavigationLink {
-                                            SourceDirectoryView(
-                                                source: source,
-                                                currentPath: source.protocolType == .dlna ? "0" : "/"
-                                            )
-                                        } label: {
-                                            HStack(spacing: 22) {
-                                                AetherIconMedallion(
-                                                    systemName: source.protocolType.cardSymbolName,
-                                                    colors: source.protocolType.gradientColors,
-                                                    size: 68
-                                                )
-                                                VStack(alignment: .leading, spacing: 6) {
-                                                    HStack(spacing: 10) {
-                                                        Text(source.name)
-                                                            .font(.system(size: 26, weight: .bold))
-                                                            .foregroundStyle(Color.white)
-                                                            .lineLimit(1)
-                                                        Text(source.protocolType.rawValue)
-                                                            .font(.system(size: 14, weight: .bold))
-                                                            .foregroundStyle(Color.white)
-                                                            .padding(.horizontal, 10)
-                                                            .padding(.vertical, 3)
-                                                            .background(source.protocolType.accentColor.opacity(0.32), in: Capsule())
-                                                    }
-                                                    Text(source.baseURLString)
-                                                        .font(.system(size: 18))
-                                                        .foregroundStyle(Color.white.opacity(0.64))
+                                                HStack(spacing: 10) {
+                                                    Text(source.name)
+                                                        .font(.system(size: 26, weight: .bold))
+                                                        .foregroundStyle(Color.white)
                                                         .lineLimit(1)
-                                                    if source.limitSingleConnection || source.holdSourceConnection {
-                                                        HStack(spacing: 8) {
-                                                            if source.limitSingleConnection {
-                                                                tagPill("单连接限流", color: .orange)
-                                                            }
-                                                            if source.holdSourceConnection {
-                                                                tagPill("保持长连接", color: .cyan)
-                                                            }
+                                                    Text(source.protocolType.rawValue)
+                                                        .font(.system(size: 14, weight: .bold))
+                                                        .foregroundStyle(Color.white)
+                                                        .padding(.horizontal, 10)
+                                                        .padding(.vertical, 3)
+                                                        .background(source.protocolType.accentColor.opacity(0.32), in: Capsule())
+                                                }
+                                                Text(source.baseURLString)
+                                                    .font(.system(size: 18))
+                                                    .foregroundStyle(Color.white.opacity(0.64))
+                                                    .lineLimit(1)
+                                                if source.limitSingleConnection || source.holdSourceConnection {
+                                                    HStack(spacing: 8) {
+                                                        if source.limitSingleConnection {
+                                                            tagPill("单连接限流", color: .orange)
+                                                        }
+                                                        if source.holdSourceConnection {
+                                                            tagPill("保持长连接", color: .cyan)
                                                         }
                                                     }
                                                 }
-                                                Spacer()
-                                                Image(systemName: "chevron.right")
-                                                    .font(.system(size: 20, weight: .bold))
-                                                    .foregroundStyle(Color.white.opacity(0.5))
                                             }
-                                            .padding(24)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            Spacer()
+                                            Image(systemName: "chevron.right")
+                                                .font(.system(size: 20, weight: .bold))
+                                                .foregroundStyle(Color.white.opacity(0.5))
                                         }
-                                        .buttonStyle(AetherSpotlightCardStyle(accent: source.protocolType.accentColor, cornerRadius: 22))
-                                        .contextMenu {
-                                            Button("编辑此媒体源") {
-                                                editingSource = source
-                                            }
-                                            Button("删除此媒体源", role: .destructive) {
-                                                sourceStore.remove(id: source.id)
-                                            }
+                                        .padding(24)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .buttonStyle(AetherSpotlightCardStyle(accent: source.protocolType.accentColor, cornerRadius: 22))
+                                    .contextMenu {
+                                        Button("编辑此媒体源") {
+                                            editingSource = source
+                                        }
+                                        Button("删除此媒体源", role: .destructive) {
+                                            sourceStore.remove(id: source.id)
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    .padding(.horizontal, 72)
-                    .padding(.vertical, 40)
                 }
+                .padding(.horizontal, 72)
+                .padding(.vertical, 40)
             }
-            .fullScreenCover(item: $addingProtocol) { proto in
-                AddMediaSourceView(initialProtocol: proto) { newSource in
-                    sourceStore.add(newSource)
-                }
+        }
+        .fullScreenCover(item: $addingProtocol) { proto in
+            AddMediaSourceView(initialProtocol: proto) { newSource in
+                sourceStore.add(newSource)
             }
-            .fullScreenCover(item: $editingSource) { source in
-                AddMediaSourceView(editing: source) { updated in
-                    sourceStore.update(updated)
-                }
+        }
+        .fullScreenCover(item: $editingSource) { source in
+            AddMediaSourceView(editing: source) { updated in
+                sourceStore.update(updated)
             }
-            .fullScreenCover(item: $discoveredPrefill) { service in
-                AddMediaSourceView(discoveredService: service) { newSource in
-                    sourceStore.add(newSource)
-                }
+        }
+        .fullScreenCover(item: $discoveredPrefill) { service in
+            AddMediaSourceView(discoveredService: service) { newSource in
+                sourceStore.add(newSource)
             }
-            .fullScreenCover(isPresented: $showQRConfigSheet) {
-                QuickConfigQRView { imported in
-                    sourceStore.add(imported)
-                }
+        }
+        .fullScreenCover(isPresented: $showQRConfigSheet) {
+            QuickConfigQRView { imported in
+                sourceStore.add(imported)
             }
-            .fullScreenCover(isPresented: $showLANDiscoverySheet) {
-                LANDiscoverySheetView { service in
-                    discoveredPrefill = service
-                }
+        }
+        .fullScreenCover(isPresented: $showLANDiscoverySheet) {
+            LANDiscoverySheetView { service in
+                discoveredPrefill = service
             }
         }
     }
@@ -238,201 +244,546 @@ struct SourceBrowserView: View {
     }
 }
 
-// MARK: - 媒体源目录浏览（精美玻璃卡片网格，杜绝纯文字白底白字列表）
+// MARK: - 媒体源目录浏览（独立全屏导航层级，支持遥控器逐级返回、非破坏性重试与原地编辑）
 
 struct SourceDirectoryView: View {
-    let source: MediaSourceConfig
-    let currentPath: String
-    /// 由上一级传入的显示名：Emby / Plex / DLNA 的 remotePath 是服务器内部 ID，
-    /// 直接拿来当标题会显示成数字 ID，所以标题由导航方带上。
-    var displayTitle: String? = nil
+    let route: SourceDirectoryRoute
+    var onOpenSubdirectory: (SourceDirectoryRoute) -> Void = { _ in }
+    var onGoBack: () -> Void = {}
+    var onPopToRoot: () -> Void = {}
 
+    @EnvironmentObject private var sourceStore: MediaSourceStore
     @EnvironmentObject private var settings: PlayerSettingsStore
     @EnvironmentObject private var historyStore: WatchHistoryStore
 
     @State private var items: [MediaItem] = []
     @State private var isLoading = false
+    @State private var hasLoadedSuccessfully = false
     @State private var errorMessage: String?
+    @State private var retryCount = 0
+    @State private var lastAttemptTimeText: String?
+    @State private var loadRequestID = UUID()
+    @State private var completedRequestID: UUID?
     @State private var playingItem: MediaItem?
+    @State private var isEditingSource = false
+
+    private enum DirectoryFocus: Hashable {
+        case back
+        case reload
+        case edit
+        case retry
+        case cancelLoading
+    }
+
+    @FocusState private var focusedControl: DirectoryFocus?
+
+    /// 始终读取 MediaSourceStore 中最新配置，编辑保存后立刻生效
+    private var liveSource: MediaSourceConfig {
+        sourceStore.sources.first(where: { $0.id == route.sourceId }) ?? route.fallbackSource
+    }
 
     private var playableItems: [MediaItem] {
         items.filter { !$0.isDirectory }
     }
 
+    private var isRootDirectory: Bool {
+        route.currentPath == "/" || route.currentPath == "0" || route.currentPath.isEmpty
+    }
+
     private var navigationTitle: String {
-        if let displayTitle, !displayTitle.isEmpty { return displayTitle }
-        if currentPath == "/" || currentPath == "0" || currentPath.isEmpty { return source.name }
-        return (currentPath as NSString).lastPathComponent
+        if let displayTitle = route.displayTitle, !displayTitle.isEmpty { return displayTitle }
+        if isRootDirectory { return liveSource.name }
+        return (route.currentPath as NSString).lastPathComponent
+    }
+
+    private var breadcrumbText: String {
+        if isRootDirectory {
+            if liveSource.protocolType == .smb && !liveSource.shareName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "\(liveSource.baseURLString)/\(liveSource.shareName.trimmingCharacters(in: CharacterSet(charactersIn: "/\\ ")))"
+            }
+            return liveSource.baseURLString
+        }
+        return "\(liveSource.name) · \(route.currentPath)"
     }
 
     var body: some View {
         ZStack {
-            AetherAmbientBackdrop(accent: source.protocolType.accentColor)
+            AetherAmbientBackdrop(accent: liveSource.protocolType.accentColor)
 
-            if source.protocolType == .directURL {
-                directURLPlayView
-            } else if isLoading {
-                VStack(spacing: 22) {
-                    ProgressView()
-                        .scaleEffect(1.4)
-                    Text("正在读取 \(source.name)…")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.75))
+            VStack(spacing: 0) {
+                topNavigationBar
+
+                Divider()
+                    .overlay(Color.white.opacity(0.12))
+                    .padding(.horizontal, 60)
+
+                contentArea
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .onExitCommand {
+            guard !isEditingSource, playingItem == nil else { return }
+            goBack()
+        }
+        .task(id: loadRequestID) {
+            guard liveSource.protocolType != .directURL else { return }
+            // 从子目录返回时若本级已加载成功且无主动刷新请求，保留当前目录避免无谓重载闪烁
+            if hasLoadedSuccessfully && completedRequestID == loadRequestID {
+                return
+            }
+            await loadDirectory(for: loadRequestID)
+        }
+        .fullScreenCover(item: $playingItem) { item in
+            PlayerScreenView(
+                item: item,
+                playlist: playableItems.isEmpty ? [item] : playableItems,
+                sourceConfig: liveSource
+            )
+        }
+        .fullScreenCover(isPresented: $isEditingSource) {
+            AddMediaSourceView(editing: liveSource) { updated in
+                sourceStore.update(updated)
+                triggerReload(resetError: true)
+            }
+        }
+    }
+
+    // MARK: - 顶部固定操作栏（永远可返回、可刷新、可编辑，杜绝任何页面卡死）
+
+    private var topNavigationBar: some View {
+        HStack(spacing: 22) {
+            Button {
+                goBack()
+            } label: {
+                Label("返回上一级", systemImage: "chevron.left")
+                    .font(.system(size: 21, weight: .semibold))
+            }
+            .buttonStyle(AetherPillButtonStyle(
+                accent: .white,
+                cornerRadius: 16,
+                horizontalPadding: 22,
+                verticalPadding: 13
+            ))
+            .focused($focusedControl, equals: .back)
+
+            AetherIconMedallion(
+                systemName: liveSource.protocolType.cardSymbolName,
+                colors: liveSource.protocolType.gradientColors,
+                size: 54
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 12) {
+                    Text(navigationTitle)
+                        .font(.system(size: 32, weight: .bold))
+                        .foregroundStyle(Color.white)
+                        .lineLimit(1)
+                    Text(liveSource.protocolType.rawValue)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .background(liveSource.protocolType.accentColor.opacity(0.32), in: Capsule())
                 }
-            } else if let errorMessage {
-                VStack(spacing: 22) {
-                    AetherIconMedallion(
-                        systemName: "wifi.exclamationmark",
-                        colors: [Color(red: 0.90, green: 0.42, blue: 0.14), Color(red: 0.98, green: 0.68, blue: 0.22)],
-                        size: 82
-                    )
-                    Text(errorMessage)
-                        .font(.system(size: 24))
-                        .foregroundStyle(Color.white.opacity(0.88))
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 820)
-                    Button("重新加载") {
-                        AppleTVSoundEffects.playSelect()
-                        Task { await loadDirectory() }
+                Text(breadcrumbText)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.60))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 16)
+
+            if liveSource.protocolType != .directURL {
+                Button {
+                    guard !isLoading else { return }
+                    AppleTVSoundEffects.playSelect()
+                    triggerReload(resetError: false)
+                } label: {
+                    HStack(spacing: 10) {
+                        if isLoading {
+                            ProgressView()
+                                .scaleEffect(0.75)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 19, weight: .semibold))
+                        }
+                        Text(isLoading ? "读取中…" : "刷新")
+                            .font(.system(size: 20, weight: .semibold))
                     }
-                    .buttonStyle(AetherPillButtonStyle(accent: source.protocolType.accentColor, prominent: true))
                 }
-                .padding(48)
-            } else if items.isEmpty {
-                VStack(spacing: 18) {
-                    AetherIconMedallion(
-                        systemName: "folder",
-                        colors: [Color(white: 0.24), Color(white: 0.16)],
-                        size: 76
-                    )
-                    Text("此目录下没有可播放的视频文件")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.70))
+                .buttonStyle(AetherPillButtonStyle(
+                    accent: liveSource.protocolType.accentColor,
+                    cornerRadius: 16,
+                    horizontalPadding: 22,
+                    verticalPadding: 13
+                ))
+                .focused($focusedControl, equals: .reload)
+            }
+
+            Button {
+                AppleTVSoundEffects.playSelect()
+                isEditingSource = true
+            } label: {
+                Label("编辑媒体源", systemImage: "slider.horizontal.3")
+                    .font(.system(size: 20, weight: .semibold))
+            }
+            .buttonStyle(AetherPillButtonStyle(
+                accent: .cyan,
+                cornerRadius: 16,
+                horizontalPadding: 22,
+                verticalPadding: 13
+            ))
+            .focused($focusedControl, equals: .edit)
+        }
+        .padding(.horizontal, 60)
+        .padding(.top, 26)
+        .padding(.bottom, 20)
+        .focusSection()
+    }
+
+    // MARK: - 内容主体（出错重载时不销毁按钮，焦点绝不丢失，快速失败也有清晰反馈）
+
+    @ViewBuilder
+    private var contentArea: some View {
+        if liveSource.protocolType == .directURL {
+            directURLPlayView
+        } else if let errorMessage {
+            errorStateView(message: errorMessage)
+        } else if isLoading && items.isEmpty {
+            initialLoadingView
+        } else if items.isEmpty {
+            emptyDirectoryView
+        } else {
+            directoryGridView
+        }
+    }
+
+    private var initialLoadingView: some View {
+        VStack(spacing: 24) {
+            ProgressView()
+                .scaleEffect(1.4)
+            Text("正在连接 \(liveSource.name)…")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.86))
+            Text(breadcrumbText)
+                .font(.system(size: 19))
+                .foregroundStyle(Color.white.opacity(0.56))
+            Button {
+                goBack()
+            } label: {
+                Label("取消并返回", systemImage: "chevron.left")
+                    .font(.system(size: 21, weight: .semibold))
+            }
+            .buttonStyle(AetherPillButtonStyle(
+                accent: .white,
+                cornerRadius: 16,
+                horizontalPadding: 28,
+                verticalPadding: 14
+            ))
+            .focused($focusedControl, equals: .cancelLoading)
+            .padding(.top, 8)
+        }
+        .padding(48)
+        .onAppear {
+            if focusedControl == nil {
+                focusedControl = .cancelLoading
+            }
+        }
+    }
+
+    private func errorStateView(message: String) -> some View {
+        VStack(spacing: 24) {
+            AetherIconMedallion(
+                systemName: "wifi.exclamationmark",
+                colors: [Color(red: 0.90, green: 0.42, blue: 0.14), Color(red: 0.98, green: 0.68, blue: 0.22)],
+                size: 82
+            )
+
+            Text("无法读取目录内容")
+                .font(.system(size: 32, weight: .bold))
+                .foregroundStyle(Color.white)
+
+            Text(message)
+                .font(.system(size: 22))
+                .foregroundStyle(Color.white.opacity(0.88))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 960)
+
+            if isLoading {
+                HStack(spacing: 12) {
+                    ProgressView()
+                        .scaleEffect(0.85)
+                    Text("正在重新连接 \(liveSource.baseURLString)…")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(Color(red: 0.48, green: 0.90, blue: 1.0))
                 }
-            } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 460, maximum: 580), spacing: 26)],
-                        spacing: 24
-                    ) {
-                        ForEach(items) { item in
-                            if item.isDirectory {
-                                NavigationLink {
-                                    SourceDirectoryView(source: source, currentPath: item.remotePath, displayTitle: item.title)
-                                } label: {
-                                    HStack(spacing: 20) {
+                .padding(.top, 2)
+            } else if let lastAttemptTimeText, retryCount > 0 {
+                Text("上次重试：\(lastAttemptTimeText)（已重试 \(retryCount) 次）")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.55))
+            }
+
+            HStack(spacing: 20) {
+                // 不对聚焦中的按钮使用 .disabled(isLoading)，避免 tvOS 焦点引擎强行驱逐焦点
+                Button {
+                    guard !isLoading else { return }
+                    AppleTVSoundEffects.playSelect()
+                    triggerReload(resetError: false)
+                } label: {
+                    HStack(spacing: 10) {
+                        if isLoading {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 20, weight: .bold))
+                        }
+                        Text(isLoading ? "正在重试…" : "重新加载")
+                            .font(.system(size: 22, weight: .bold))
+                    }
+                }
+                .buttonStyle(AetherPillButtonStyle(
+                    accent: liveSource.protocolType.accentColor,
+                    prominent: true,
+                    cornerRadius: 18,
+                    horizontalPadding: 32,
+                    verticalPadding: 15
+                ))
+                .focused($focusedControl, equals: .retry)
+
+                Button {
+                    AppleTVSoundEffects.playSelect()
+                    isEditingSource = true
+                } label: {
+                    Label("编辑媒体源", systemImage: "slider.horizontal.3")
+                        .font(.system(size: 22, weight: .semibold))
+                }
+                .buttonStyle(AetherPillButtonStyle(
+                    accent: .cyan,
+                    cornerRadius: 18,
+                    horizontalPadding: 28,
+                    verticalPadding: 15
+                ))
+
+                Button {
+                    goBack()
+                } label: {
+                    Label("返回上一级", systemImage: "chevron.left")
+                        .font(.system(size: 22, weight: .semibold))
+                }
+                .buttonStyle(AetherPillButtonStyle(
+                    accent: .white,
+                    cornerRadius: 18,
+                    horizontalPadding: 28,
+                    verticalPadding: 15
+                ))
+            }
+            .padding(.top, 8)
+            .focusSection()
+        }
+        .padding(48)
+        .background(Color(red: 0.08, green: 0.10, blue: 0.17).opacity(0.82), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1.2)
+        )
+        .padding(.horizontal, 60)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                focusedControl = .retry
+            }
+        }
+    }
+
+    private var emptyDirectoryView: some View {
+        let isSMBRootWithoutShare = liveSource.protocolType == .smb
+            && liveSource.shareName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && isRootDirectory
+
+        return VStack(spacing: 22) {
+            AetherIconMedallion(
+                systemName: "folder",
+                colors: [Color(white: 0.26), Color(white: 0.16)],
+                size: 80
+            )
+            Text(isSMBRootWithoutShare
+                 ? "已连接服务器，但未发现可见的 SMB 共享文件夹"
+                 : "此目录下没有可播放的视频文件")
+                .font(.system(size: 28, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.88))
+            if isSMBRootWithoutShare {
+                Text("部分 NAS 会隐藏共享列表，可点击下方「编辑媒体源」手动填入共享文件夹名（如 media / video）")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color.white.opacity(0.64))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 820)
+            }
+            HStack(spacing: 20) {
+                Button {
+                    guard !isLoading else { return }
+                    AppleTVSoundEffects.playSelect()
+                    triggerReload(resetError: false)
+                } label: {
+                    HStack(spacing: 10) {
+                        if isLoading {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 19, weight: .bold))
+                        }
+                        Text(isLoading ? "正在重试…" : "重新加载")
+                            .font(.system(size: 21, weight: .semibold))
+                    }
+                }
+                .buttonStyle(AetherPillButtonStyle(accent: liveSource.protocolType.accentColor, prominent: true))
+                .focused($focusedControl, equals: .retry)
+
+                Button {
+                    AppleTVSoundEffects.playSelect()
+                    isEditingSource = true
+                } label: {
+                    Label("编辑媒体源", systemImage: "slider.horizontal.3")
+                        .font(.system(size: 21, weight: .semibold))
+                }
+                .buttonStyle(AetherPillButtonStyle(accent: .cyan))
+
+                Button {
+                    goBack()
+                } label: {
+                    Label("返回上一级", systemImage: "chevron.left")
+                        .font(.system(size: 21, weight: .semibold))
+                }
+                .buttonStyle(AetherPillButtonStyle(accent: .white))
+            }
+            .padding(.top, 6)
+            .focusSection()
+        }
+        .padding(48)
+    }
+
+    private var directoryGridView: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 460, maximum: 580), spacing: 26)],
+                spacing: 24
+            ) {
+                ForEach(items) { item in
+                    if item.isDirectory {
+                        Button {
+                            AppleTVSoundEffects.playSelect()
+                            onOpenSubdirectory(SourceDirectoryRoute(
+                                sourceId: liveSource.id,
+                                currentPath: item.remotePath,
+                                displayTitle: item.title,
+                                fallbackSource: liveSource
+                            ))
+                        } label: {
+                            HStack(spacing: 20) {
+                                AetherIconMedallion(
+                                    systemName: "folder.fill",
+                                    colors: [Color(red: 0.18, green: 0.50, blue: 0.96), Color(red: 0.24, green: 0.78, blue: 0.98)],
+                                    size: 60
+                                )
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(item.title)
+                                        .font(.system(size: 24, weight: .bold))
+                                        .foregroundStyle(Color.white)
+                                        .lineLimit(1)
+                                    Text(item.subtitle ?? "文件夹")
+                                        .font(.system(size: 17))
+                                        .foregroundStyle(Color.white.opacity(0.58))
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundStyle(Color.white.opacity(0.45))
+                            }
+                            .padding(20)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(AetherSpotlightCardStyle(accent: liveSource.protocolType.accentColor, cornerRadius: 20))
+                    } else {
+                        Button {
+                            AppleTVSoundEffects.playSelect()
+                            playingItem = item
+                        } label: {
+                            HStack(spacing: 20) {
+                                if item.posterURL != nil {
+                                    AuthenticatedPosterImage(url: item.posterURL, sourceId: item.sourceId) {
                                         AetherIconMedallion(
-                                            systemName: "folder.fill",
-                                            colors: [Color(red: 0.18, green: 0.50, blue: 0.96), Color(red: 0.24, green: 0.78, blue: 0.98)],
+                                            systemName: "play.fill",
+                                            colors: liveSource.protocolType.gradientColors,
                                             size: 60
                                         )
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(item.title)
-                                                .font(.system(size: 24, weight: .bold))
-                                                .foregroundStyle(Color.white)
+                                    }
+                                    .frame(width: 96, height: 64)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                } else {
+                                    AetherIconMedallion(
+                                        systemName: "play.fill",
+                                        colors: liveSource.protocolType.gradientColors,
+                                        size: 60
+                                    )
+                                }
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(item.title)
+                                        .font(.system(size: 23, weight: .bold))
+                                        .foregroundStyle(Color.white)
+                                        .lineLimit(1)
+
+                                    HStack(spacing: 12) {
+                                        if let size = item.formattedFileSize {
+                                            Text(size)
+                                                .foregroundStyle(Color.white.opacity(0.68))
+                                        }
+                                        if !item.externalSubtitles.isEmpty {
+                                            Label("\(item.externalSubtitles.count) 字幕", systemImage: "captions.bubble.fill")
+                                                .foregroundStyle(Color(red: 0.42, green: 0.88, blue: 1.0))
+                                        } else if let sub = item.subtitle {
+                                            Text(sub)
+                                                .foregroundStyle(Color.white.opacity(0.64))
                                                 .lineLimit(1)
-                                            Text(item.subtitle ?? "文件夹")
-                                                .font(.system(size: 17))
-                                                .foregroundStyle(Color.white.opacity(0.58))
                                         }
-                                        Spacer()
-                                        Image(systemName: "chevron.right")
-                                            .font(.system(size: 18, weight: .bold))
-                                            .foregroundStyle(Color.white.opacity(0.45))
+                                        if let pos = historyStore.savedPosition(for: item.id) {
+                                            Text("续播 \(BottomAppleProgressBar.formatTimestamp(pos))")
+                                                .foregroundStyle(Color.green)
+                                        }
                                     }
-                                    .padding(20)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .font(.system(size: 16, weight: .medium))
                                 }
-                                .buttonStyle(AetherSpotlightCardStyle(accent: source.protocolType.accentColor, cornerRadius: 20))
-                            } else {
-                                Button {
-                                    AppleTVSoundEffects.playSelect()
-                                    playingItem = item
-                                } label: {
-                                    HStack(spacing: 20) {
-                                        if item.posterURL != nil {
-                                            AuthenticatedPosterImage(url: item.posterURL, sourceId: item.sourceId) {
-                                                AetherIconMedallion(
-                                                    systemName: "play.fill",
-                                                    colors: source.protocolType.gradientColors,
-                                                    size: 60
-                                                )
-                                            }
-                                            .frame(width: 96, height: 64)
-                                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                        } else {
-                                            AetherIconMedallion(
-                                                systemName: "play.fill",
-                                                colors: source.protocolType.gradientColors,
-                                                size: 60
-                                            )
-                                        }
 
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            Text(item.title)
-                                                .font(.system(size: 23, weight: .bold))
-                                                .foregroundStyle(Color.white)
-                                                .lineLimit(1)
+                                Spacer(minLength: 8)
 
-                                            HStack(spacing: 12) {
-                                                if let size = item.formattedFileSize {
-                                                    Text(size)
-                                                        .foregroundStyle(Color.white.opacity(0.68))
-                                                }
-                                                if !item.externalSubtitles.isEmpty {
-                                                    Label("\(item.externalSubtitles.count) 字幕", systemImage: "captions.bubble.fill")
-                                                        .foregroundStyle(Color(red: 0.42, green: 0.88, blue: 1.0))
-                                                } else if let sub = item.subtitle {
-                                                    Text(sub)
-                                                        .foregroundStyle(Color.white.opacity(0.64))
-                                                        .lineLimit(1)
-                                                }
-                                                if let pos = historyStore.savedPosition(for: item.id) {
-                                                    Text("续播 \(BottomAppleProgressBar.formatTimestamp(pos))")
-                                                        .foregroundStyle(Color.green)
-                                                }
-                                            }
-                                            .font(.system(size: 16, weight: .medium))
-                                        }
-
-                                        Spacer(minLength: 8)
-
-                                        if historyStore.isFavorite(item) {
-                                            Image(systemName: "star.fill")
-                                                .font(.system(size: 22))
-                                                .foregroundStyle(Color.yellow)
-                                        }
-                                    }
-                                    .padding(20)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                if historyStore.isFavorite(item) {
+                                    Image(systemName: "star.fill")
+                                        .font(.system(size: 22))
+                                        .foregroundStyle(Color.yellow)
                                 }
-                                .buttonStyle(AetherSpotlightCardStyle(accent: source.protocolType.accentColor, cornerRadius: 20))
-                                .contextMenu {
-                                    Button(historyStore.isFavorite(item) ? "取消收藏" : "加入收藏") {
-                                        historyStore.toggleFavorite(item)
-                                    }
-                                    Button("从头播放") {
-                                        historyStore.clearProgress(for: item.id)
-                                        playingItem = item
-                                    }
-                                }
+                            }
+                            .padding(20)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(AetherSpotlightCardStyle(accent: liveSource.protocolType.accentColor, cornerRadius: 20))
+                        .contextMenu {
+                            Button(historyStore.isFavorite(item) ? "取消收藏" : "加入收藏") {
+                                historyStore.toggleFavorite(item)
+                            }
+                            Button("从头播放") {
+                                historyStore.clearProgress(for: item.id)
+                                playingItem = item
                             }
                         }
                     }
-                    .padding(.horizontal, 60)
-                    .padding(.vertical, 32)
                 }
             }
+            .padding(.horizontal, 60)
+            .padding(.vertical, 32)
         }
-        .navigationTitle(navigationTitle)
-        .task {
-            if source.protocolType != .directURL {
-                await loadDirectory()
-            }
-        }
-        .fullScreenCover(item: $playingItem) { item in
-            PlayerScreenView(item: item, playlist: playableItems.isEmpty ? [item] : playableItems, sourceConfig: source)
-        }
+        .focusSection()
     }
 
     private var directURLPlayView: some View {
@@ -442,21 +793,21 @@ struct SourceDirectoryView: View {
                 colors: MediaProtocolType.directURL.gradientColors,
                 size: 88
             )
-            Text(source.baseURLString)
+            Text(liveSource.baseURLString)
                 .font(.system(size: 24, weight: .semibold, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.85))
             Button {
                 AppleTVSoundEffects.playSelect()
-                if let url = URL(string: source.baseURLString) {
+                if let url = URL(string: liveSource.baseURLString) {
                     playingItem = MediaItem(
-                        id: "direct:\(source.id.uuidString)",
-                        title: source.name,
+                        id: "direct:\(liveSource.id.uuidString)",
+                        title: liveSource.name,
                         isDirectory: false,
                         streamURL: url,
-                        sourceId: source.id,
+                        sourceId: liveSource.id,
                         protocolType: .directURL,
                         remotePath: "/",
-                        httpHeaders: NetworkPitfallGuards.standardHTTPHeaders(for: source)
+                        httpHeaders: NetworkPitfallGuards.standardHTTPHeaders(for: liveSource)
                     )
                 }
             } label: {
@@ -467,20 +818,40 @@ struct SourceDirectoryView: View {
         }
     }
 
-    private func loadDirectory() async {
+    private func goBack() {
+        AppleTVSoundEffects.playBack()
+        onGoBack()
+    }
+
+    private func triggerReload(resetError: Bool) {
+        retryCount += 1
+        if resetError {
+            errorMessage = nil
+        }
+        loadRequestID = UUID()
+    }
+
+    private func loadDirectory(for requestID: UUID) async {
+        let source = liveSource
+        let startedAt = Date()
+        let isManualRetry = retryCount > 0
         isLoading = true
-        errorMessage = nil
-        defer { isLoading = false }
+        defer {
+            if loadRequestID == requestID {
+                isLoading = false
+            }
+        }
 
         do {
+            let fetched: [MediaItem]
             switch source.protocolType {
             case .webdav:
                 let client = WebDAVClient(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
-                items = try await client.listDirectory(source: source, path: currentPath)
+                fetched = try await client.listDirectory(source: source, path: route.currentPath)
             case .emby, .jellyfin, .plex:
                 let client = MediaServerClients(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
-                let parent = (currentPath == "/" || currentPath.isEmpty) ? nil : currentPath
-                items = try await client.browse(source: source, parentId: parent)
+                let parent = (route.currentPath == "/" || route.currentPath.isEmpty) ? nil : route.currentPath
+                fetched = try await client.browse(source: source, parentId: parent)
             case .dlna:
                 guard let path = source.dlnaControlPath else {
                     throw MediaServerError.missingControlURL
@@ -489,17 +860,44 @@ struct SourceDirectoryView: View {
                     throw MediaServerError.invalidURL
                 }
                 let client = DLNADiscoveryClient(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
-                items = try await client.browse(controlURL: url, objectId: currentPath, sourceId: source.id)
+                fetched = try await client.browse(controlURL: url, objectId: route.currentPath, sourceId: source.id)
             case .smb:
                 let client = SMBSourceClient()
-                items = try await client.listDirectory(source: source, path: currentPath)
+                fetched = try await client.listDirectory(source: source, path: route.currentPath)
             case .directURL:
-                items = []
+                fetched = []
             }
+
+            guard !Task.isCancelled, loadRequestID == requestID else { return }
+            items = fetched
+            errorMessage = nil
+            hasLoadedSuccessfully = true
+            completedRequestID = requestID
+        } catch is CancellationError {
+            return
         } catch {
+            guard !Task.isCancelled, loadRequestID == requestID else { return }
+            // 若手动点击“重新加载”后服务器瞬间拒连（<350ms），保留短促加载态反馈，让用户明确感知重试已执行
+            if isManualRetry {
+                let elapsed = Date().timeIntervalSince(startedAt)
+                if elapsed < 0.35 {
+                    try? await Task.sleep(nanoseconds: UInt64((0.35 - elapsed) * 1_000_000_000))
+                }
+            }
+            guard !Task.isCancelled, loadRequestID == requestID else { return }
             errorMessage = error.localizedDescription
+            lastAttemptTimeText = Self.attemptTimeFormatter.string(from: Date())
+            if focusedControl == nil || focusedControl == .cancelLoading {
+                focusedControl = .retry
+            }
         }
     }
+
+    private static let attemptTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
 }
 
 // MARK: - 添加 / 编辑媒体源（图标协议条 + 标准通用占位示例 + 高对比度表单，无白底白字）
@@ -592,11 +990,10 @@ struct AddMediaSourceView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                AetherAmbientBackdrop(accent: protocolType.accentColor)
+        ZStack {
+            AetherAmbientBackdrop(accent: protocolType.accentColor)
 
-                ScrollView(.vertical, showsIndicators: false) {
+            ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 34) {
                         // 顶部标题与快捷工具按钮
                         VStack(alignment: .leading, spacing: 20) {
@@ -879,12 +1276,11 @@ struct AddMediaSourceView: View {
                     testSucceeded = true
                 }
             }
-            .fullScreenCover(isPresented: $showLANDiscoverySheet) {
-                LANDiscoverySheetView { service in
-                    applyDiscoveredService(service)
-                    testMessage = "已填入发现的设备「\(service.name)」，请补充认证信息或测试连接"
-                    testSucceeded = true
-                }
+        .fullScreenCover(isPresented: $showLANDiscoverySheet) {
+            LANDiscoverySheetView { service in
+                applyDiscoveredService(service)
+                testMessage = "已填入发现的设备「\(service.name)」，请补充认证信息或测试连接"
+                testSucceeded = true
             }
         }
     }
@@ -1072,64 +1468,66 @@ struct QuickConfigQRView: View {
     let onReceived: (MediaSourceConfig) -> Void
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                AetherAmbientBackdrop(accent: Color(red: 0.14, green: 0.84, blue: 0.86))
+        ZStack {
+            AetherAmbientBackdrop(accent: Color(red: 0.14, green: 0.84, blue: 0.86))
 
-                VStack(spacing: 30) {
-                    if let qrImage = server.qrImage {
-                        Image(uiImage: qrImage)
-                            .interpolation(.none)
-                            .resizable()
-                            .frame(width: 310, height: 310)
-                            .padding(20)
-                            .background(Color.white, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                            .shadow(color: Color.cyan.opacity(0.35), radius: 28, x: 0, y: 12)
-                    } else {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                            .frame(width: 310, height: 310)
-                    }
-
-                    Text(server.statusMessage)
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 820)
-
-                    if let url = server.accessURLString {
-                        Text(url)
-                            .font(.system(size: 22, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Color(red: 0.44, green: 0.92, blue: 1.0))
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 10)
-                            .background(Color.white.opacity(0.10), in: Capsule())
-                    }
-
-                    Button {
-                        AppleTVSoundEffects.playBack()
-                        dismiss()
-                    } label: {
-                        Label("关闭", systemImage: "xmark.circle.fill")
-                            .font(.system(size: 22, weight: .semibold))
-                    }
-                    .buttonStyle(AetherPillButtonStyle(accent: .cyan, horizontalPadding: 34, verticalPadding: 15))
+            VStack(spacing: 30) {
+                if let qrImage = server.qrImage {
+                    Image(uiImage: qrImage)
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: 310, height: 310)
+                        .padding(20)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        .shadow(color: Color.cyan.opacity(0.35), radius: 28, x: 0, y: 12)
+                } else {
+                    ProgressView()
+                        .scaleEffect(1.5)
+                        .frame(width: 310, height: 310)
                 }
-                .padding(48)
-            }
-            .onAppear {
-                AppleTVSoundEffects.playPanelOpen()
-                server.start()
-            }
-            .onDisappear {
-                server.stop()
-            }
-            .onChange(of: server.receivedConfig) { _, config in
-                if let config {
-                    AppleTVSoundEffects.playSelect()
-                    onReceived(config)
+
+                Text(server.statusMessage)
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 820)
+
+                if let url = server.accessURLString {
+                    Text(url)
+                        .font(.system(size: 22, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(red: 0.44, green: 0.92, blue: 1.0))
+                        .padding(.horizontal, 22)
+                        .padding(.vertical, 10)
+                        .background(Color.white.opacity(0.10), in: Capsule())
+                }
+
+                Button {
+                    AppleTVSoundEffects.playBack()
                     dismiss()
+                } label: {
+                    Label("关闭", systemImage: "xmark.circle.fill")
+                        .font(.system(size: 22, weight: .semibold))
                 }
+                .buttonStyle(AetherPillButtonStyle(accent: .cyan, horizontalPadding: 34, verticalPadding: 15))
+            }
+            .padding(48)
+        }
+        .onAppear {
+            AppleTVSoundEffects.playPanelOpen()
+            server.start()
+        }
+        .onDisappear {
+            server.stop()
+        }
+        .onExitCommand {
+            AppleTVSoundEffects.playBack()
+            dismiss()
+        }
+        .onChange(of: server.receivedConfig) { _, config in
+            if let config {
+                AppleTVSoundEffects.playSelect()
+                onReceived(config)
+                dismiss()
             }
         }
     }
@@ -1144,125 +1542,127 @@ struct LANDiscoverySheetView: View {
     let onSelect: (DiscoveredLANService) -> Void
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                AetherAmbientBackdrop(accent: Color(red: 0.50, green: 0.36, blue: 1.0))
+        ZStack {
+            AetherAmbientBackdrop(accent: Color(red: 0.50, green: 0.36, blue: 1.0))
 
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 26) {
-                        HStack(spacing: 20) {
-                            AetherIconMedallion(
-                                systemName: "dot.radiowaves.left.and.right",
-                                colors: [Color(red: 0.48, green: 0.28, blue: 0.96), Color(red: 0.24, green: 0.72, blue: 1.0)],
-                                size: 64
-                            )
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("发现局域网设备")
-                                    .font(.system(size: 36, weight: .bold))
-                                    .foregroundStyle(Color.white)
-                                Text(browser.isScanning ? "正在扫描 Bonjour（SMB / WebDAV / Emby / Plex）与 DLNA 设备…" : "点击任意设备即可自动填入地址与端口")
-                                    .font(.system(size: 20))
-                                    .foregroundStyle(Color.white.opacity(0.68))
-                            }
-                            Spacer()
-                            Button {
-                                AppleTVSoundEffects.playSelect()
-                                browser.start(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
-                            } label: {
-                                Label("重新扫描", systemImage: "arrow.clockwise")
-                                    .font(.system(size: 20, weight: .semibold))
-                            }
-                            .buttonStyle(AetherPillButtonStyle(accent: .purple))
-
-                            Button {
-                                AppleTVSoundEffects.playBack()
-                                dismiss()
-                            } label: {
-                                Label("关闭", systemImage: "xmark")
-                                    .font(.system(size: 20, weight: .semibold))
-                            }
-                            .buttonStyle(AetherPillButtonStyle(accent: .white))
-                        }
-
-                        if browser.dlnaMulticastBlocked {
-                            HStack(spacing: 14) {
-                                Image(systemName: "info.circle.fill")
-                                    .font(.system(size: 24))
-                                    .foregroundStyle(Color.orange)
-                                Text("当前自签名证书未授予多播受限权限，DLNA SSDP 自动发现已被系统拦截；SMB / WebDAV / Emby / Jellyfin / Plex 的 Bonjour 扫描不受影响，DLNA 可手动填入 Control 路径。")
-                                    .font(.system(size: 18))
-                                    .foregroundStyle(Color.white.opacity(0.86))
-                            }
-                            .padding(20)
-                            .background(Color.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        }
-
-                        if browser.isScanning && browser.discoveredServices.isEmpty {
-                            HStack(spacing: 16) {
-                                ProgressView()
-                                Text("正在等待局域网设备响应…")
-                                    .font(.system(size: 22))
-                                    .foregroundStyle(Color.white.opacity(0.74))
-                            }
-                            .padding(.vertical, 40)
-                        } else if browser.discoveredServices.isEmpty {
-                            Text("暂未发现支持广播的局域网媒体服务，可点击右上角重新扫描，或返回使用手机扫码 / 手动添加。")
-                                .font(.system(size: 22))
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 26) {
+                    HStack(spacing: 20) {
+                        AetherIconMedallion(
+                            systemName: "dot.radiowaves.left.and.right",
+                            colors: [Color(red: 0.48, green: 0.28, blue: 0.96), Color(red: 0.24, green: 0.72, blue: 1.0)],
+                            size: 64
+                        )
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("发现局域网设备")
+                                .font(.system(size: 36, weight: .bold))
+                                .foregroundStyle(Color.white)
+                            Text(browser.isScanning ? "正在扫描 Bonjour（SMB / WebDAV / Emby / Plex）与 DLNA 设备…" : "点击任意设备即可自动填入地址与端口")
+                                .font(.system(size: 20))
                                 .foregroundStyle(Color.white.opacity(0.68))
-                                .padding(.vertical, 32)
-                        } else {
-                            LazyVGrid(
-                                columns: [GridItem(.adaptive(minimum: 460, maximum: 600), spacing: 24)],
-                                spacing: 24
-                            ) {
-                                ForEach(browser.discoveredServices) { service in
-                                    Button {
-                                        AppleTVSoundEffects.playSelect()
-                                        onSelect(service)
-                                        dismiss()
-                                    } label: {
-                                        HStack(spacing: 20) {
-                                            AetherIconMedallion(
-                                                systemName: service.protocolType.cardSymbolName,
-                                                colors: service.protocolType.gradientColors,
-                                                size: 62
-                                            )
-                                            VStack(alignment: .leading, spacing: 6) {
-                                                Text(service.name)
-                                                    .font(.system(size: 24, weight: .bold))
-                                                    .foregroundStyle(Color.white)
-                                                    .lineLimit(1)
-                                                Text("\(service.protocolType.displayName) · \(service.host):\(service.port)\(service.dlnaControlPath ?? "")")
-                                                    .font(.system(size: 17))
-                                                    .foregroundStyle(Color.white.opacity(0.65))
-                                                    .lineLimit(1)
-                                            }
-                                            Spacer()
-                                            Text("填入")
-                                                .font(.system(size: 18, weight: .bold))
-                                                .foregroundStyle(service.protocolType.accentColor)
-                                                .padding(.horizontal, 16)
-                                                .padding(.vertical, 8)
-                                                .background(service.protocolType.accentColor.opacity(0.20), in: Capsule())
+                        }
+                        Spacer()
+                        Button {
+                            AppleTVSoundEffects.playSelect()
+                            browser.start(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
+                        } label: {
+                            Label("重新扫描", systemImage: "arrow.clockwise")
+                                .font(.system(size: 20, weight: .semibold))
+                        }
+                        .buttonStyle(AetherPillButtonStyle(accent: .purple))
+
+                        Button {
+                            AppleTVSoundEffects.playBack()
+                            dismiss()
+                        } label: {
+                            Label("关闭", systemImage: "xmark")
+                                .font(.system(size: 20, weight: .semibold))
+                        }
+                        .buttonStyle(AetherPillButtonStyle(accent: .white))
+                    }
+
+                    if browser.dlnaMulticastBlocked {
+                        HStack(spacing: 14) {
+                            Image(systemName: "info.circle.fill")
+                                .font(.system(size: 24))
+                                .foregroundStyle(Color.orange)
+                            Text("当前自签名证书未授予多播受限权限，DLNA SSDP 自动发现已被系统拦截；SMB / WebDAV / Emby / Jellyfin / Plex 的 Bonjour 扫描不受影响，DLNA 可手动填入 Control 路径。")
+                                .font(.system(size: 18))
+                                .foregroundStyle(Color.white.opacity(0.86))
+                        }
+                        .padding(20)
+                        .background(Color.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+
+                    if browser.isScanning && browser.discoveredServices.isEmpty {
+                        HStack(spacing: 16) {
+                            ProgressView()
+                            Text("正在等待局域网设备响应…")
+                                .font(.system(size: 22))
+                                .foregroundStyle(Color.white.opacity(0.74))
+                        }
+                        .padding(.vertical, 40)
+                    } else if browser.discoveredServices.isEmpty {
+                        Text("暂未发现支持广播的局域网媒体服务，可点击右上角重新扫描，或返回使用手机扫码 / 手动添加。")
+                            .font(.system(size: 22))
+                            .foregroundStyle(Color.white.opacity(0.68))
+                            .padding(.vertical, 32)
+                    } else {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 460, maximum: 600), spacing: 24)],
+                            spacing: 24
+                        ) {
+                            ForEach(browser.discoveredServices) { service in
+                                Button {
+                                    AppleTVSoundEffects.playSelect()
+                                    onSelect(service)
+                                    dismiss()
+                                } label: {
+                                    HStack(spacing: 20) {
+                                        AetherIconMedallion(
+                                            systemName: service.protocolType.cardSymbolName,
+                                            colors: service.protocolType.gradientColors,
+                                            size: 62
+                                        )
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(service.name)
+                                                .font(.system(size: 24, weight: .bold))
+                                                .foregroundStyle(Color.white)
+                                                .lineLimit(1)
+                                            Text("\(service.protocolType.displayName) · \(service.host):\(service.port)\(service.dlnaControlPath ?? "")")
+                                                .font(.system(size: 17))
+                                                .foregroundStyle(Color.white.opacity(0.65))
+                                                .lineLimit(1)
                                         }
-                                        .padding(22)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        Spacer()
+                                        Text("填入")
+                                            .font(.system(size: 18, weight: .bold))
+                                            .foregroundStyle(service.protocolType.accentColor)
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 8)
+                                            .background(service.protocolType.accentColor.opacity(0.20), in: Capsule())
                                     }
-                                    .buttonStyle(AetherSpotlightCardStyle(accent: service.protocolType.accentColor, cornerRadius: 22))
+                                    .padding(22)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                 }
+                                .buttonStyle(AetherSpotlightCardStyle(accent: service.protocolType.accentColor, cornerRadius: 22))
                             }
                         }
                     }
-                    .padding(60)
                 }
+                .padding(60)
             }
-            .onAppear {
-                AppleTVSoundEffects.playPanelOpen()
-                browser.start(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
-            }
-            .onDisappear {
-                browser.stop()
-            }
+        }
+        .onAppear {
+            AppleTVSoundEffects.playPanelOpen()
+            browser.start(allowSelfSignedLAN: settings.allowSelfSignedCertificates)
+        }
+        .onDisappear {
+            browser.stop()
+        }
+        .onExitCommand {
+            AppleTVSoundEffects.playBack()
+            dismiss()
         }
     }
 }
