@@ -3,7 +3,7 @@ import AVFoundation
 
 /// AetherTV 定制苹果风空间交互音效引擎（基于预加载 AVAudioPlayer 缓冲池）
 /// 相比在 tvOS 上常常静默的 iOS SystemSoundID，使用随包打包的 48kHz 微声效 WAV + 多实例轮询池，
-/// 既保证 Apple TV 真机上高频焦点滑动清脆不丢帧，又采用 `.ambient` 混音绝不打断或抢占视频播放的 HDMI 音频会话。
+/// 既保证 Apple TV 真机上高频焦点滑动清脆不丢帧，又不篡改 AVAudioSession 类别，确保 AetherEngine 全权掌管 HDMI/eARC 音频路由。
 @MainActor
 enum AppleTVSoundEffects {
     enum Cue: String, CaseIterable {
@@ -30,22 +30,18 @@ enum AppleTVSoundEffects {
     private static var lastFocusTime: TimeInterval = 0
     private static var lastTickTime: TimeInterval = 0
 
-    /// 预热音效池并配置 `.ambient` 混音会话（不干扰 AetherEngine 播放期间的 HDMI/eARC 路由）
+    static func bundleURL(for cue: Cue) -> URL? {
+        Bundle.main.url(forResource: cue.rawValue, withExtension: "wav")
+            ?? Bundle.main.url(forResource: cue.rawValue, withExtension: "wav", subdirectory: "Sounds")
+    }
+
+    /// 预热音效池（不修改 AVAudioSession，避免干扰 AetherEngine 的原生 HDMI / Atmos 音频会话协商）
     static func prepareIfNeeded() {
         guard !didPrepare else { return }
         didPrepare = true
 
-        // 仅在尚未播放视频时尝试设置 .ambient + .mixWithOthers，让主页/菜单微音效在真机稳定发声
-        let session = AVAudioSession.sharedInstance()
-        if session.category != .playback {
-            try? session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
-            try? session.setActive(true)
-        }
-
         for cue in Cue.allCases {
-            guard let url = Bundle.main.url(forResource: cue.rawValue, withExtension: "wav") else {
-                continue
-            }
+            guard let url = bundleURL(for: cue) else { continue }
             var players: [AVAudioPlayer] = []
             for _ in 0..<3 {
                 if let player = try? AVAudioPlayer(contentsOf: url) {

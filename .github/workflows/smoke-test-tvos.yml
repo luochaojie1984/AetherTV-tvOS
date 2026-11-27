@@ -190,7 +190,9 @@ jobs:
           for step in report.get("steps", []):
               print(f"  {'ok  ' if step['ok'] else 'FAIL'} {step['name']:26s} {step['durationSeconds']:6.1f}s  {step.get('detail','')[:220]}")
               if not step["ok"]:
-                  print(f"       -> {step.get('message','')[:500]}")
+                  msg = step.get("message", "")[:500]
+                  print(f"       -> {msg}")
+                  print(f"::error title=SmokeTest FAIL ({step['name']})::{msg}")
           ok = bool(report.get("ok")) and bool(report.get("finishedAt"))
           print("overall:", "PASS" if ok else "FAIL")
           sys.exit(0 if ok else 1)

@@ -118,7 +118,7 @@ enum SmokeTestRunner {
 
         await step("unit.soundBundleAssets") {
             for cue in AppleTVSoundEffects.Cue.allCases {
-                let url = Bundle.main.url(forResource: cue.rawValue, withExtension: "wav")
+                let url = AppleTVSoundEffects.bundleURL(for: cue)
                 try require(url != nil, "打包产物中缺少定制交互音效：\(cue.rawValue).wav")
             }
             AppleTVSoundEffects.prepareIfNeeded()
