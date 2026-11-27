@@ -105,11 +105,24 @@ enum SmokeTestRunner {
                 .environmentObject(MediaSourceStore.shared)
                 .environmentObject(PlayerSettingsStore.shared))
         }
+        await step("ui.addSourceSMB") {
+            try await showcase("添加SMB", AddMediaSourceView(initialProtocol: .smb) { _ in }
+                .environmentObject(PlayerSettingsStore.shared))
+        }
         await step("ui.home") {
             try await showcase("首页", HomeLibraryView()
                 .environmentObject(MediaSourceStore.shared)
                 .environmentObject(WatchHistoryStore.shared)
                 .environmentObject(PlayerSettingsStore.shared))
+        }
+
+        await step("unit.soundBundleAssets") {
+            for cue in AppleTVSoundEffects.Cue.allCases {
+                let url = Bundle.main.url(forResource: cue.rawValue, withExtension: "wav")
+                try require(url != nil, "打包产物中缺少定制交互音效：\(cue.rawValue).wav")
+            }
+            AppleTVSoundEffects.prepareIfNeeded()
+            return "all \(AppleTVSoundEffects.Cue.allCases.count) custom wav sound effects bundled"
         }
 
         await step("unit.keychainAndSanitization") {

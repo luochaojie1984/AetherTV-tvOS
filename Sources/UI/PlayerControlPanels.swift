@@ -10,15 +10,24 @@ enum PlayerPanelTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var icon: String {
         switch self {
-        case .subtitles: return "captions.bubble"
-        case .audio: return "speaker.wave.3"
-        case .video: return "tv"
-        case .chapters: return "list.bullet.rectangle"
+        case .subtitles: return "captions.bubble.fill"
+        case .audio: return "speaker.wave.3.fill"
+        case .video: return "sparkles.tv.fill"
+        case .chapters: return "list.bullet.rectangle.fill"
+        }
+    }
+
+    var accent: Color {
+        switch self {
+        case .subtitles: return Color(red: 0.32, green: 0.78, blue: 1.0)
+        case .audio: return Color(red: 0.22, green: 0.86, blue: 0.56)
+        case .video: return Color(red: 0.64, green: 0.44, blue: 1.0)
+        case .chapters: return Color(red: 0.98, green: 0.72, blue: 0.22)
         }
     }
 }
 
-/// 苹果原生毛玻璃风格播放器快捷控制面板（按下方向键唤出）
+/// 苹果原生毛玻璃风格播放器快捷控制面板（按下方向键唤出；全部控件焦点感知，绝不出现白底白字）
 struct PlayerControlPanels: View {
     @ObservedObject var controller: PlaybackController
     @ObservedObject var engine: AetherEngine
@@ -31,40 +40,43 @@ struct PlayerControlPanels: View {
         VStack(spacing: 0) {
             Spacer()
 
-            VStack(spacing: 20) {
+            VStack(spacing: 22) {
                 // 顶部苹果风格分段标签栏
-                HStack(spacing: 18) {
+                HStack(spacing: 16) {
                     ForEach(PlayerPanelTab.allCases) { tab in
                         Button {
                             AppleTVSoundEffects.playSelect()
-                            selectedTab = tab
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                selectedTab = tab
+                            }
                         } label: {
                             Label(tab.rawValue, systemImage: tab.icon)
                                 .font(.system(size: 22, weight: .semibold))
-                                .padding(.horizontal, 22)
-                                .padding(.vertical, 10)
-                                .background(
-                                    selectedTab == tab
-                                        ? Color.white.opacity(0.24)
-                                        : Color.white.opacity(0.06),
-                                    in: Capsule()
-                                )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(AetherPillButtonStyle(
+                            accent: tab.accent,
+                            isSelected: selectedTab == tab,
+                            cornerRadius: 24,
+                            horizontalPadding: 24,
+                            verticalPadding: 12
+                        ))
                     }
 
                     Spacer()
 
                     Button {
-                        AppleTVSoundEffects.playSelect()
+                        AppleTVSoundEffects.playBack()
                         onDismiss()
                     } label: {
                         Label("完成", systemImage: "xmark.circle.fill")
-                            .font(.system(size: 22, weight: .medium))
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 10)
+                            .font(.system(size: 22, weight: .semibold))
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(AetherPillButtonStyle(
+                        accent: .white,
+                        cornerRadius: 24,
+                        horizontalPadding: 22,
+                        verticalPadding: 12
+                    ))
                 }
 
                 Divider().overlay(Color.white.opacity(0.18))
@@ -81,36 +93,56 @@ struct PlayerControlPanels: View {
                         chaptersAndToolsTabContent
                     }
                 }
-                .frame(height: 430)
+                .frame(height: 440)
             }
             .padding(34)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+            .background(
+                ZStack {
+                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .fill(Color(red: 0.06, green: 0.08, blue: 0.14).opacity(0.92))
+                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [selectedTab.accent.opacity(0.14), Color.clear],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
             )
+            .overlay(
+                RoundedRectangle(cornerRadius: 30, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.28), selectedTab.accent.opacity(0.22)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.2
+                    )
+            )
+            .shadow(color: Color.black.opacity(0.75), radius: 40, x: 0, y: 18)
             .padding(.horizontal, 60)
             .padding(.bottom, 34)
         }
-        .background(Color.black.opacity(0.38).ignoresSafeArea())
+        .background(Color.black.opacity(0.45).ignoresSafeArea())
+        .onAppear {
+            AppleTVSoundEffects.playPanelOpen()
+        }
     }
 
     // MARK: - 字幕设置面板
 
     private var subtitleTabContent: some View {
         VStack(alignment: .leading, spacing: 24) {
-            // 主字幕轨道选择
             VStack(alignment: .leading, spacing: 10) {
                 Text("主字幕轨道")
                     .font(.headline)
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(Color.white.opacity(0.75))
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        trackChip(
-                            title: "关闭字幕",
-                            isSelected: !engine.isSubtitleActive
-                        ) {
+                    HStack(spacing: 14) {
+                        trackChip(title: "关闭字幕", isSelected: !engine.isSubtitleActive) {
                             controller.clearPrimarySubtitle()
                         }
 
@@ -123,18 +155,19 @@ struct PlayerControlPanels: View {
                             }
                         }
                     }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 4)
                 }
             }
 
-            // 副字幕（双语字幕）
             if engine.subtitleTracks.count > 1 {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("双语副字幕（可选）")
                         .font(.headline)
-                        .foregroundStyle(.white.opacity(0.75))
+                        .foregroundStyle(Color.white.opacity(0.75))
 
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
+                        HStack(spacing: 14) {
                             trackChip(title: "关闭副字幕", isSelected: !engine.isSecondarySubtitleActive) {
                                 controller.clearSecondarySubtitle()
                             }
@@ -147,11 +180,12 @@ struct PlayerControlPanels: View {
                                 }
                             }
                         }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 4)
                     }
                 }
             }
 
-            // 常见字幕核心参数调节（大小、垂直位置、延迟、样式）
             HStack(spacing: 24) {
                 stepperCard(
                     title: "字幕大小",
@@ -175,24 +209,27 @@ struct PlayerControlPanels: View {
                 )
             }
 
-            HStack(spacing: 18) {
-                // 颜色切换
-                ForEach(SubtitleColorPreset.allCases) { preset in
-                    trackChip(title: "颜色：\(preset.rawValue)", isSelected: settings.subtitleColor == preset) {
-                        settings.subtitleColor = preset
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(SubtitleColorPreset.allCases) { preset in
+                        trackChip(title: "颜色：\(preset.rawValue)", isSelected: settings.subtitleColor == preset) {
+                            settings.subtitleColor = preset
+                        }
+                    }
+
+                    trackChip(title: "保留 ASS 特效样式", isSelected: settings.preserveASSStyling) {
+                        settings.preserveASSStyling.toggle()
+                    }
+
+                    trackChip(
+                        title: settings.subtitleBackgroundOpacity > 0.1 ? "字幕底框：开" : "字幕底框：关",
+                        isSelected: settings.subtitleBackgroundOpacity > 0.1
+                    ) {
+                        settings.subtitleBackgroundOpacity = settings.subtitleBackgroundOpacity > 0.1 ? 0.0 : 0.55
                     }
                 }
-
-                trackChip(title: "保留 ASS 特效样式", isSelected: settings.preserveASSStyling) {
-                    settings.preserveASSStyling.toggle()
-                }
-
-                trackChip(
-                    title: settings.subtitleBackgroundOpacity > 0.1 ? "字幕底框：开" : "字幕底框：关",
-                    isSelected: settings.subtitleBackgroundOpacity > 0.1
-                ) {
-                    settings.subtitleBackgroundOpacity = settings.subtitleBackgroundOpacity > 0.1 ? 0.0 : 0.55
-                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 4)
             }
         }
     }
@@ -204,10 +241,10 @@ struct PlayerControlPanels: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("音轨选择")
                     .font(.headline)
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(Color.white.opacity(0.75))
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 14) {
                         ForEach(engine.audioTracks, id: \.id) { track in
                             trackChip(
                                 title: formatAudioTrackLabel(track),
@@ -217,6 +254,8 @@ struct PlayerControlPanels: View {
                             }
                         }
                     }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 4)
                 }
             }
 
@@ -242,23 +281,27 @@ struct PlayerControlPanels: View {
                 )
             }
 
-            HStack(spacing: 16) {
-                trackChip(title: "夜间模式（压缩动态）", isSelected: settings.nightModeEnabled) {
-                    settings.nightModeEnabled.toggle()
-                    controller.applyAudioShaping()
-                }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    trackChip(title: "夜间模式（压缩动态）", isSelected: settings.nightModeEnabled) {
+                        settings.nightModeEnabled.toggle()
+                        controller.applyAudioShaping()
+                    }
 
-                trackChip(title: "响度均衡 (-20 LUFS)", isSelected: settings.loudnessNormalizeEnabled) {
-                    settings.loudnessNormalizeEnabled.toggle()
-                    controller.applyAudioShaping()
-                }
+                    trackChip(title: "响度均衡 (-20 LUFS)", isSelected: settings.loudnessNormalizeEnabled) {
+                        settings.loudnessNormalizeEnabled.toggle()
+                        controller.applyAudioShaping()
+                    }
 
-                ForEach(AudioBridgePreference.allCases) { mode in
-                    trackChip(title: mode.rawValue, isSelected: settings.audioBridgePreference == mode) {
-                        settings.audioBridgePreference = mode
-                        controller.applyDecodePreferenceLive()
+                    ForEach(AudioBridgePreference.allCases) { mode in
+                        trackChip(title: mode.rawValue, isSelected: settings.audioBridgePreference == mode) {
+                            settings.audioBridgePreference = mode
+                            controller.applyDecodePreferenceLive()
+                        }
                     }
                 }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 4)
             }
         }
     }
@@ -270,7 +313,7 @@ struct PlayerControlPanels: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("解码通道（当前：\(engine.activeVideoDecoder ?? "自动")）")
                     .font(.headline)
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(Color.white.opacity(0.75))
 
                 HStack(spacing: 14) {
                     ForEach(DecodePreference.allCases) { pref in
@@ -280,40 +323,45 @@ struct PlayerControlPanels: View {
                         }
                     }
                 }
+                .padding(.vertical, 6)
             }
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("画面比例与杜比视界")
                     .font(.headline)
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(Color.white.opacity(0.75))
 
-                HStack(spacing: 14) {
-                    ForEach(VideoAspectMode.allCases) { mode in
-                        trackChip(title: mode.rawValue, isSelected: controller.activeAspectMode == mode) {
-                            controller.setAspectMode(mode)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(VideoAspectMode.allCases) { mode in
+                            trackChip(title: mode.rawValue, isSelected: controller.activeAspectMode == mode) {
+                                controller.setAspectMode(mode)
+                            }
                         }
-                    }
 
-                    ForEach(DolbyVisionMode.allCases) { dv in
-                        trackChip(title: dv.rawValue, isSelected: settings.dolbyVisionMode == dv) {
-                            settings.dolbyVisionMode = dv
+                        ForEach(DolbyVisionMode.allCases) { dv in
+                            trackChip(title: dv.rawValue, isSelected: settings.dolbyVisionMode == dv) {
+                                settings.dolbyVisionMode = dv
+                                controller.applyDecodePreferenceLive()
+                            }
+                        }
+
+                        trackChip(title: "低清 SDR 超分放大", isSelected: settings.upscaleLowResSDR) {
+                            settings.upscaleLowResSDR.toggle()
                             controller.applyDecodePreferenceLive()
                         }
                     }
-
-                    trackChip(title: "低清 SDR 超分放大", isSelected: settings.upscaleLowResSDR) {
-                        settings.upscaleLowResSDR.toggle()
-                        controller.applyDecodePreferenceLive()
-                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 4)
                 }
             }
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("播放倍速")
                     .font(.headline)
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(Color.white.opacity(0.75))
 
-                HStack(spacing: 12) {
+                HStack(spacing: 14) {
                     ForEach([Float(0.5), 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
                         trackChip(
                             title: rate == 1.0 ? "1.0x 原速" : String(format: "%.2gx", rate),
@@ -323,6 +371,7 @@ struct PlayerControlPanels: View {
                         }
                     }
                 }
+                .padding(.vertical, 6)
             }
         }
     }
@@ -348,16 +397,16 @@ struct PlayerControlPanels: View {
                     settings.showStatsHUD.toggle()
                 }
             }
+            .padding(.vertical, 6)
 
-            // 睡眠定时器
             VStack(alignment: .leading, spacing: 10) {
                 Text(controller.sleepTimerRemainingMinutes > 0
                      ? "睡眠定时（剩余 \(controller.sleepTimerRemainingMinutes) 分钟）"
                      : "睡眠定时")
                     .font(.headline)
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(Color.white.opacity(0.75))
 
-                HStack(spacing: 12) {
+                HStack(spacing: 14) {
                     ForEach(SleepTimerOption.allCases) { opt in
                         trackChip(
                             title: opt.label,
@@ -367,18 +416,18 @@ struct PlayerControlPanels: View {
                         }
                     }
                 }
+                .padding(.vertical, 6)
             }
 
-            // 章节列表（容器章节或蓝光/DVD 章节）
             let chapters = engine.mediaChapters.isEmpty ? engine.discChapters : engine.mediaChapters
             if !chapters.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("章节跳转")
                         .font(.headline)
-                        .foregroundStyle(.white.opacity(0.75))
+                        .foregroundStyle(Color.white.opacity(0.75))
 
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
+                        HStack(spacing: 14) {
                             ForEach(chapters, id: \.id) { ch in
                                 trackChip(
                                     title: "\(ch.name) (\(BottomAppleProgressBar.formatTimestamp(ch.startSeconds)))",
@@ -393,13 +442,15 @@ struct PlayerControlPanels: View {
                                 }
                             }
                         }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 4)
                     }
                 }
             }
         }
     }
 
-    // MARK: - 通用控件
+    // MARK: - 高对比度控件（聚焦自动切白底深字 + 焦点音效）
 
     private func trackChip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button {
@@ -409,19 +460,19 @@ struct PlayerControlPanels: View {
             HStack(spacing: 8) {
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.green)
                 }
                 Text(title)
-                    .font(.system(size: 20, weight: .medium))
+                    .font(.system(size: 20, weight: .semibold))
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
-            .background(
-                isSelected ? Color.white.opacity(0.26) : Color.white.opacity(0.08),
-                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-            )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AetherPillButtonStyle(
+            accent: selectedTab.accent,
+            isSelected: isSelected,
+            cornerRadius: 15,
+            horizontalPadding: 20,
+            verticalPadding: 12
+        ))
     }
 
     private func stepperCard(
@@ -434,36 +485,51 @@ struct PlayerControlPanels: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(Color.white.opacity(0.70))
                 Text(valueText)
-                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.white)
                     .monospacedDigit()
             }
 
             Spacer()
 
             Button {
-                AppleTVSoundEffects.playFocusTick()
+                AppleTVSoundEffects.playSelect()
                 onDecrement()
             } label: {
-                Image(systemName: "minus.circle.fill")
-                    .font(.system(size: 32))
+                Image(systemName: "minus")
+                    .font(.system(size: 20, weight: .bold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AetherPillButtonStyle(
+                accent: selectedTab.accent,
+                cornerRadius: 14,
+                horizontalPadding: 14,
+                verticalPadding: 10
+            ))
 
             Button {
-                AppleTVSoundEffects.playFocusTick()
+                AppleTVSoundEffects.playSelect()
                 onIncrement()
             } label: {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 32))
+                Image(systemName: "plus")
+                    .font(.system(size: 20, weight: .bold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AetherPillButtonStyle(
+                accent: selectedTab.accent,
+                cornerRadius: 14,
+                horizontalPadding: 14,
+                verticalPadding: 10
+            ))
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
-        .frame(minWidth: 320)
-        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .frame(minWidth: 340)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+        )
     }
 
     private func formatTrackLabel(_ track: TrackInfo) -> String {

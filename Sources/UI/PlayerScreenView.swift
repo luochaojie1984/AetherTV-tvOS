@@ -187,26 +187,29 @@ struct PlayerScreenView: View {
                     HStack(spacing: 20) {
                         if controller.engine != nil {
                             Button("重试") {
+                                AppleTVSoundEffects.playSelect()
                                 Task {
                                     await controller.load(item: item, playlist: playlist, sourceConfig: sourceConfig)
                                 }
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(AetherPillButtonStyle(accent: .cyan, prominent: true))
 
                             Button("切软解重试") {
+                                AppleTVSoundEffects.playSelect()
                                 settings.decodePreference = .software
                                 Task {
                                     await controller.load(item: item, playlist: playlist, sourceConfig: sourceConfig)
                                 }
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(AetherPillButtonStyle(accent: .purple))
                         }
 
                         Button("返回") {
+                            AppleTVSoundEffects.playBack()
                             controller.stopAndDismiss()
                             dismiss()
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(AetherPillButtonStyle(accent: .white))
                     }
                 }
                 .padding(40)

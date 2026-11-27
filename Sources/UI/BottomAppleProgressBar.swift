@@ -90,11 +90,17 @@ struct BottomAppleProgressBar: View {
                             .fill(Color.white.opacity(0.46))
                             .frame(width: barWidth * bufferedFraction, height: scrubEngine.isScrubbing ? 11 : 7)
 
-                        // 已播进度轨
+                        // 已播进度轨（微发光苹果原生质感）
                         Capsule(style: .continuous)
-                            .fill(Color.white)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color(red: 0.42, green: 0.88, blue: 1.0), Color.white],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
                             .frame(width: max(thumbX, 0), height: scrubEngine.isScrubbing ? 11 : 7)
-                            .shadow(color: .black.opacity(0.45), radius: 3, x: 0, y: 0)
+                            .shadow(color: Color.cyan.opacity(0.55), radius: 6, x: 0, y: 0)
 
                         // 章节刻度点
                         ForEach(engine.mediaChapters, id: \.id) { chapter in

@@ -287,8 +287,8 @@ final class QuickConfigWebServer: ObservableObject {
             <p class="sub">填写完成后点击发送，电视端表单将自动填入。</p>
             <label>协议类型</label>
             <select id="protocolType" onchange="syncDefaults()">
-              <option value="SMB">SMB</option>
-              <option value="WebDAV" selected>WebDAV</option>
+              <option value="SMB" selected>SMB</option>
+              <option value="WebDAV">WebDAV</option>
               <option value="Emby">Emby</option>
               <option value="Jellyfin">Jellyfin</option>
               <option value="Plex">Plex</option>
@@ -296,26 +296,26 @@ final class QuickConfigWebServer: ObservableObject {
               <option value="HTTP 直链">HTTP 直链</option>
             </select>
             <label>媒体源名称</label>
-            <input id="name" placeholder="例如：客厅 NAS" value="客厅 NAS" />
+            <input id="name" placeholder="例如：家庭 NAS" value="" />
             <label>服务器 IP 或主机名</label>
-            <input id="host" placeholder="例如：192.168.1.10" />
+            <input id="host" placeholder="例如：192.168.1.100 或 nas.local" />
             <label>端口（0 为默认端口）</label>
-            <input id="port" type="number" value="5005" />
+            <input id="port" type="number" value="445" />
             <div class="row">
               <input id="useHTTPS" type="checkbox" />
               <label style="margin:0">启用 HTTPS</label>
             </div>
-            <div id="shareWrap" style="display:none">
-              <label>SMB 共享名（如 video / media）</label>
-              <input id="shareName" placeholder="video" />
+            <div id="shareWrap">
+              <label>SMB 共享名（如 media / share）</label>
+              <input id="shareName" placeholder="例如：media" />
             </div>
-            <div id="pathWrap">
+            <div id="pathWrap" style="display:none">
               <label>基础路径 / DLNA Control 路径</label>
-              <input id="basePath" value="/" placeholder="/dav 或 /ctl/ContentDir" />
+              <input id="basePath" value="/" placeholder="例如：/dav 或 /ctl/ContentDir" />
             </div>
             <div id="userWrap">
               <label>用户名（访客可留空）</label>
-              <input id="username" />
+              <input id="username" placeholder="例如：admin" />
               <label>密码</label>
               <input id="password" type="password" />
             </div>
