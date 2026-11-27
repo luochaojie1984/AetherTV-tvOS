@@ -123,6 +123,9 @@ class Handler(BaseHTTPRequestHandler):
                     remaining -= len(chunk)
 
     def do_PROPFIND(self):
+        length = int(self.headers.get("Content-Length") or "0")
+        if length > 0:
+            self.rfile.read(length)
         if not self.authorized():
             return
         relative, exists, is_dir, full = self.request_path()
