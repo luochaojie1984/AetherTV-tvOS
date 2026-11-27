@@ -186,7 +186,7 @@ struct AetherPillButtonStyle: ButtonStyle {
 
 private struct AetherPillButtonBody: View {
     @Environment(\.isFocused) private var isFocused
-    let configuration: ButtonStyle.Configuration
+    let configuration: ButtonStyleConfiguration
     let accent: Color
     let isSelected: Bool
     let prominent: Bool
@@ -275,7 +275,7 @@ struct AetherSpotlightCardStyle: ButtonStyle {
 
 private struct AetherSpotlightCardBody: View {
     @Environment(\.isFocused) private var isFocused
-    let configuration: ButtonStyle.Configuration
+    let configuration: ButtonStyleConfiguration
     let accent: Color
     let isSelected: Bool
     let cornerRadius: CGFloat
@@ -362,7 +362,7 @@ struct AetherPosterCardStyle: ButtonStyle {
 
 private struct AetherPosterCardBody: View {
     @Environment(\.isFocused) private var isFocused
-    let configuration: ButtonStyle.Configuration
+    let configuration: ButtonStyleConfiguration
     let accent: Color
     let cornerRadius: CGFloat
 

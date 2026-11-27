@@ -250,6 +250,7 @@ struct HomeLibraryView: View {
                                 RadialGradient(
                                     colors: [Color(red: 0.20, green: 0.68, blue: 1.0).opacity(0.40), Color(red: 0.10, green: 0.14, blue: 0.28).opacity(0.85)],
                                     center: .topLeading,
+                                    startRadius: 0,
                                     endRadius: 120
                                 )
                             )
@@ -379,7 +380,7 @@ struct HomeLibraryView: View {
                         heroSpecBadge("上次看到 \(BottomAppleProgressBar.formatTimestamp(entry.lastPositionSeconds))", accent: .white)
                     }
                     if let size = item.formattedFileSize {
-                        heroSpecBadge(size, accent: .white.opacity(0.8))
+                        heroSpecBadge(size, accent: Color.white.opacity(0.8))
                     }
                 }
 
